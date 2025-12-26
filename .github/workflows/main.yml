@@ -1,0 +1,31 @@
+name: Buat Aplikasi Windows
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Bikin Jadi EXE (PyInstaller)
+      run: |
+        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" SuratBNI.py
+
+    - name: Upload Hasilnya
+      uses: actions/upload-artifact@v3
+      with:
+        name: Aplikasi-Surat-Windows
+        path: dist/SuratBNI_App.exe
