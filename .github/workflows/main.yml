@@ -22,7 +22,8 @@ jobs:
 
     - name: Bikin Jadi EXE (PyInstaller)
       run: |
-        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" AplikasiSuratBNI.py
+        # Perhatikan bagian CVMS/ di bawah ini
+        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" CVMS/AplikasiSuratBNI.py
 
     - name: Upload Hasilnya
       uses: actions/upload-artifact@v4
