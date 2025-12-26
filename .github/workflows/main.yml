@@ -18,11 +18,11 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        pip install pandas openpyxl pyinstaller
+        pip install pandas openpyxl pyinstaller pywin32
 
     - name: Bikin Jadi EXE (PyInstaller)
       run: |
-        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" SuratBNI.py
+        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" AplikasiSuratBNI.py
 
     - name: Upload Hasilnya
       uses: actions/upload-artifact@v4
