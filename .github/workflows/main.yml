@@ -16,17 +16,18 @@ jobs:
       with:
         python-version: '3.9'
 
+    # DISINI KITA TAMBAH XLRD BIAR BISA BACA EXCEL LAMA
     - name: Install Dependencies
       run: |
-        pip install pandas openpyxl pyinstaller pywin32
+        pip install pandas openpyxl pyinstaller pywin32 xlrd
 
     - name: Bikin Jadi EXE (PyInstaller)
       run: |
-        # Perhatikan bagian CVMS/ di bawah ini
-        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_App" CVMS/AplikasiSuratBNI.py
+        # Pastikan path CVMS/AplikasiSuratBNI.py sesuai dengan struktur foldermu
+        pyinstaller --noconsole --onefile --windowed --name "SuratBNI_Ultimate" CVMS/AplikasiSuratBNI.py
 
     - name: Upload Hasilnya
       uses: actions/upload-artifact@v4
       with:
-        name: Aplikasi-Surat-Windows
-        path: dist/SuratBNI_App.exe
+        name: Aplikasi-Surat-Ultimate
+        path: dist/SuratBNI_Ultimate.exe
