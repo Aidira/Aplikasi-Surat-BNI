@@ -10,14 +10,32 @@ import json
 import sqlite3
 import base64
 import mimetypes
+import urllib.request
 from datetime import datetime
 
 # --- KONFIGURASI ---
-NAMA_FILE_ICON = "logo.png"  # Pastikan file logo ada di satu folder
+NAMA_FILE_ICON = "logo.png"
 CONFIG_FILE = "config_bni.json"
 DB_NAME = "database_bni.db"
 
-# --- TEMPLATE SURAT HTML (STANDAR BAKU BNI) ---
+# URL Logo BNI Resmi (Cadangan jika file lokal tidak ada)
+URL_LOGO_ONLINE = "https://upload.wikimedia.org/wikipedia/id/thumb/5/55/BNI_logo.svg/500px-BNI_logo.svg.png"
+
+# --- FITUR AUTO-DOWNLOAD LOGO ---
+def cek_dan_download_logo():
+    if not os.path.exists(NAMA_FILE_ICON):
+        try:
+            # Fake User-Agent agar tidak diblokir server Wikimedia
+            opener = urllib.request.build_opener()
+            opener.addheaders = [('User-agent', 'Mozilla/5.0')]
+            urllib.request.install_opener(opener)
+            urllib.request.urlretrieve(URL_LOGO_ONLINE, NAMA_FILE_ICON)
+        except: pass # Silent error jika gagal, nanti pakai teks saja
+
+# Jalankan cek logo saat start
+cek_dan_download_logo()
+
+# --- TEMPLATE SURAT HTML (STANDAR BAKU) ---
 TEMPLATE_HTML = """
 <!DOCTYPE html>
 <html lang="id">
@@ -26,31 +44,21 @@ TEMPLATE_HTML = """
     <title>Asuransi BNI</title>
     <style>
         body {{ font-family: "Times New Roman", Times, serif; font-size: 12pt; color: #000; padding: 40px; position: relative; min-height: 100vh; line-height: 1.3; }}
-        
-        /* Header Surat: Alamat Kiri, Logo Kanan */
         .surat-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }}
         .surat-alamat {{ width: 65%; }}
         .surat-logo-container {{ width: 30%; text-align: right; }}
         .surat-logo-img {{ max-width: 180px; height: auto; }}
-        
-        /* Tabel Standar */
         table {{ width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 11pt; }}
         th, td {{ border: 1px solid black; padding: 4px 8px; vertical-align: middle; }}
         th {{ text-align: center; font-weight: normal; background-color: #f2f2f2; height: 40px; }}
-        
         .kanan {{ text-align: right; }}
         .tengah {{ text-align: center; }}
         p {{ margin-bottom: 5px; margin-top: 5px; }}
         .bold {{ font-weight: bold; }}
         .justify {{ text-align: justify; }}
-        
-        /* Tanda Tangan */
         .signature {{ margin-top: 40px; page-break-inside: avoid; }}
         .ttd-space {{ height: 80px; }}
-        
-        /* Footer Kecil */
         .footer-small {{ position: absolute; bottom: 20px; right: 40px; font-size: 8pt; text-align: right; color: #444; line-height: 1.2; }}
-        
         @media print {{ .no-print {{ display: none !important; }} }}
     </style>
 </head>
@@ -87,9 +95,7 @@ TEMPLATE_HTML = """
                 <th>Over(idr/usd)</th>
             </tr>
         </thead>
-        <tbody>
-            {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
     </table>
 
     <div id="infoText">
@@ -104,11 +110,7 @@ TEMPLATE_HTML = """
     </div>
 
     <div class="footer-small">
-        PT Bank Negara Indonesia (Persero) Tbk<br>
-        Kantor Cabang Utama Tebet<br>
-        Jl. Prof. Supomo SH No. 25, Tebet<br>
-        Jakarta Selatan 12810, Indonesia<br>
-        www.bni.co.id
+        PT Bank Negara Indonesia (Persero) Tbk<br>Kantor Cabang Utama Tebet<br>Jl. Prof. Supomo SH No. 25, Tebet<br>Jakarta Selatan 12810, Indonesia<br>www.bni.co.id
     </div>
 </body>
 </html>
@@ -136,26 +138,27 @@ def init_db():
 # --- UTILITIES ---
 def get_base64_image(file_path):
     try:
+        if not os.path.exists(file_path): return None
         with open(file_path, "rb") as image_file:
             encoded_string = base64.b64encode(image_file.read()).decode()
             mime_type, _ = mimetypes.guess_type(file_path)
             return f"data:{mime_type};base64,{encoded_string}"
-    except FileNotFoundError: return None
+    except: return None
 
 class AplikasiSurat(ttk.Window):
     def __init__(self):
+        # Menggunakan tema 'cosmo' (biru modern) atau 'flatly' (hijau)
         super().__init__(themename="cosmo") 
-        self.title("BNI Insurance Generator (Desktop)")
-        self.geometry("950x750")
+        self.title("BNI Insurance Generator (Desktop System)")
+        self.geometry("1000x750")
         
         init_db()
 
         # Icon Window
         try:
             if os.path.exists(NAMA_FILE_ICON):
-                img_data = Image.open(NAMA_FILE_ICON)
-                self.icon_img = ImageTk.PhotoImage(img_data)
-                self.iconphoto(True, self.icon_img)
+                img = Image.open(NAMA_FILE_ICON)
+                self.iconphoto(True, ImageTk.PhotoImage(img))
         except: pass
         
         self.file_path = ""
@@ -199,7 +202,6 @@ class AplikasiSurat(ttk.Window):
         self.refresh_history()
 
     def create_widgets(self):
-        # Gunakan Tabs
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill=BOTH, expand=YES, padx=10, pady=10)
 
@@ -218,9 +220,10 @@ class AplikasiSurat(ttk.Window):
         header_frame = ttk.Frame(self.tab_ops)
         header_frame.pack(fill=X, pady=5)
         
+        # Logo di dalam aplikasi
         try:
             if os.path.exists(NAMA_FILE_ICON):
-                img = Image.open(NAMA_FILE_ICON).resize((50, 50))
+                img = Image.open(NAMA_FILE_ICON).resize((60, 20)) # Resize proporsional
                 self.logo_tk = ImageTk.PhotoImage(img)
                 ttk.Label(header_frame, image=self.logo_tk).pack(side=RIGHT, padx=10)
         except: pass
@@ -267,7 +270,7 @@ class AplikasiSurat(ttk.Window):
         ttk.Button(btn_frame, text="🔍 SCAN EXCEL", command=self.analisa_data, bootstyle="warning-outline", width=20).pack(side=LEFT, padx=(0,5))
         ttk.Button(btn_frame, text="🖨️ CETAK & SIMPAN DB", command=self.cetak_surat, bootstyle="success", width=25).pack(side=LEFT)
 
-        # TABLE PREVIEW (Updated Headers for BNI)
+        # TABLE PREVIEW
         self.tree = ttk.Treeview(self.tab_ops, columns=('cabang', 'mata_uang', 'saldo', 'pagu', 'over'), show='headings', height=12, bootstyle="info")
         self.tree.heading('cabang', text='KCU/KCP/KK')
         self.tree.heading('mata_uang', text='Curr')
@@ -355,9 +358,9 @@ class AplikasiSurat(ttk.Window):
                     if len(row) < 4: continue
                     cabang = str(row[1])
                     
-                    # LOGIKA PENTING: JANGAN SKIP KCU TEBET!
-                    # Kita hanya skip jika kolom cabang kosong, atau tulisan "TOTAL" / "NAMA"
-                    # "KCU" dihapus dari filter exclude agar KCU Tebet masuk.
+                    # LOGIKA AGAR KCU TEBET MASUK:
+                    # Kita hanya melewati baris yang mengandung 'TOTAL' atau 'NAMA' (Header/Footer)
+                    # Kita TIDAK memfilter 'KCU'
                     if pd.isna(cabang) or "TOTAL" in cabang or "NAMA" in cabang.upper(): continue
                     
                     pagu = self.bersihkan_angka(row[2])
@@ -399,7 +402,6 @@ class AplikasiSurat(ttk.Window):
         for i, d in enumerate(self.data_over_limit):
             html_rows += f"<tr><td class='tengah'>{i+1}</td><td>BNI {d['cabang']}</td><td class='kanan'>{d['saldo_fmt']}</td><td class='kanan'>{d['pagu_fmt']}</td><td class='kanan'>{d['over_fmt']}</td></tr>"
 
-        # Base64 Logo Logic
         base64_logo = get_base64_image(NAMA_FILE_ICON)
         logo_tag_html = f'<img src="{base64_logo}" class="surat-logo-img" alt="BNI Logo">' if base64_logo else ""
 
