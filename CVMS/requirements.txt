@@ -3,3 +3,4 @@ openpyxl
 Pillow
 pyinstaller
 ttkbootstrap
+
