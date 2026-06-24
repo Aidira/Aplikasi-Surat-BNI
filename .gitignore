@@ -1,1 +1,15 @@
 lstm_env/
+lstm_env_gui/
+venv/
+__pycache__/
+*.pyc
+
+# Data sensitif/internal — jangan pernah commit
+*.xlsx
+*.xls
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+database_bni.db
+
