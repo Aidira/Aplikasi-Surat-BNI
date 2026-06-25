@@ -66,6 +66,17 @@ def init_db():
             over_limit REAL
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS supply_remise (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tanggal DATE,
+            outlet TEXT,
+            jenis TEXT,
+            mata_uang TEXT,
+            nominal REAL,
+            keterangan TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -214,6 +225,11 @@ class AppBNI(ttk.Window):
         self.tab_riwayat = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_riwayat, text="Riwayat & Tren")
         self.build_tab_riwayat()
+
+        # Tab 5: Supply & Remise — pencatatan pengisian (supply) dan penarikan (remise) kas outlet
+        self.tab_supply_remise = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.tab_supply_remise, text="Supply & Remise")
+        self.build_tab_supply_remise()
 
     def build_tab_prediksi(self):
         """Membangun dashboard Prediksi Pagu Kas: upload dataset, lalu
@@ -454,6 +470,145 @@ class AppBNI(ttk.Window):
         self.ax_tren.set_ylabel("Over-Limit")
         self.fig_tren.tight_layout()
         self.canvas_tren.draw()
+
+    def build_tab_supply_remise(self):
+        """Membangun tab Supply & Remise: form input pencatatan pengisian (supply)
+        kas dari KC ke outlet dan penarikan kelebihan kas (remise) dari outlet ke
+        KC, beserta tabel riwayat yang bisa difilter per outlet."""
+        form = ttk.Labelframe(self.tab_supply_remise, text="Input Transaksi Supply / Remise", padding=12, bootstyle="secondary")
+        form.pack(fill=X, pady=(0, 12))
+
+        baris1 = ttk.Frame(form)
+        baris1.pack(fill=X, pady=(0, 8))
+
+        ttk.Label(baris1, text="Tanggal (YYYY-MM-DD):").pack(side=LEFT, padx=(0, 5))
+        self.ent_sr_tanggal = ttk.Entry(baris1, width=14)
+        self.ent_sr_tanggal.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.ent_sr_tanggal.pack(side=LEFT, padx=(0, 15))
+
+        ttk.Label(baris1, text="Outlet:").pack(side=LEFT, padx=(0, 5))
+        self.ent_sr_outlet = ttk.Entry(baris1, width=20)
+        self.ent_sr_outlet.pack(side=LEFT, padx=(0, 15))
+
+        ttk.Label(baris1, text="Jenis:").pack(side=LEFT, padx=(0, 5))
+        self.cmb_sr_jenis = ttk.Combobox(baris1, values=["Supply", "Remise"], state="readonly", width=10)
+        self.cmb_sr_jenis.current(0)
+        self.cmb_sr_jenis.pack(side=LEFT)
+
+        baris2 = ttk.Frame(form)
+        baris2.pack(fill=X, pady=(0, 8))
+
+        ttk.Label(baris2, text="Mata Uang:").pack(side=LEFT, padx=(0, 5))
+        self.cmb_sr_mata_uang = ttk.Combobox(baris2, values=["IDR", "USD"], state="readonly", width=8)
+        self.cmb_sr_mata_uang.current(0)
+        self.cmb_sr_mata_uang.pack(side=LEFT, padx=(0, 15))
+
+        ttk.Label(baris2, text="Nominal:").pack(side=LEFT, padx=(0, 5))
+        self.ent_sr_nominal = ttk.Entry(baris2, width=20)
+        self.ent_sr_nominal.pack(side=LEFT)
+
+        baris3 = ttk.Frame(form)
+        baris3.pack(fill=X)
+
+        ttk.Label(baris3, text="Keterangan:").pack(side=LEFT, padx=(0, 5))
+        self.ent_sr_keterangan = ttk.Entry(baris3, width=40)
+        self.ent_sr_keterangan.pack(side=LEFT, padx=(0, 15), fill=X, expand=YES)
+
+        ttk.Button(baris3, text="Simpan Transaksi", bootstyle="success",
+                   command=self.simpan_supply_remise).pack(side=LEFT)
+
+        top = ttk.Frame(self.tab_supply_remise)
+        top.pack(fill=X, pady=(0, 8))
+
+        ttk.Label(top, text="Filter Outlet:").pack(side=LEFT, padx=(0, 5))
+        self.cmb_filter_outlet_sr = ttk.Combobox(top, state="readonly", width=25)
+        self.cmb_filter_outlet_sr.pack(side=LEFT, padx=(0, 10))
+
+        ttk.Button(top, text="Muat Riwayat", bootstyle="info",
+                   command=self.muat_riwayat_supply_remise).pack(side=LEFT, padx=5)
+
+        self.tree_supply_remise = ttk.Treeview(
+            self.tab_supply_remise,
+            columns=("tanggal", "outlet", "jenis", "mata_uang", "nominal", "keterangan"),
+            show="headings", height=12,
+        )
+        label_sr = {
+            "tanggal": "Tanggal", "outlet": "Outlet", "jenis": "Jenis",
+            "mata_uang": "Mata Uang", "nominal": "Nominal", "keterangan": "Keterangan",
+        }
+        for col in self.tree_supply_remise["columns"]:
+            self.tree_supply_remise.heading(col, text=label_sr[col])
+            self.tree_supply_remise.column(col, width=130, anchor=CENTER)
+        self.tree_supply_remise.tag_configure("remise", background="#3A2A1A", foreground="#F2A104")
+        self.tree_supply_remise.tag_configure("supply", background="#1A3A2A", foreground="#2ECC71")
+        self.tree_supply_remise.pack(fill=BOTH, expand=YES)
+
+        self.muat_riwayat_supply_remise()
+
+    def _query_supply_remise(self, outlet=None):
+        """Mengambil data supply_remise dari database, opsional difilter per outlet."""
+        conn = sqlite3.connect(DB_NAME)
+        if outlet:
+            df = pd.read_sql_query(
+                "SELECT * FROM supply_remise WHERE outlet = ? ORDER BY tanggal", conn, params=(outlet,),
+            )
+        else:
+            df = pd.read_sql_query("SELECT * FROM supply_remise ORDER BY tanggal", conn)
+        conn.close()
+        return df
+
+    def simpan_supply_remise(self):
+        """Menyimpan satu transaksi supply/remise kas outlet dari form ke database."""
+        outlet = self.ent_sr_outlet.get().strip()
+        if not outlet:
+            messagebox.showwarning("Peringatan", "Isi nama outlet!")
+            return
+        nominal = self.bersihkan_angka(self.ent_sr_nominal.get())
+        if nominal <= 0:
+            messagebox.showwarning("Peringatan", "Isi nominal yang valid (lebih dari 0)!")
+            return
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO supply_remise (tanggal, outlet, jenis, mata_uang, nominal, keterangan) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.ent_sr_tanggal.get().strip(), outlet, self.cmb_sr_jenis.get(),
+                self.cmb_sr_mata_uang.get(), nominal, self.ent_sr_keterangan.get().strip(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        self.ent_sr_outlet.delete(0, END)
+        self.ent_sr_nominal.delete(0, END)
+        self.ent_sr_keterangan.delete(0, END)
+
+        self._set_status(f"Transaksi {self.cmb_sr_jenis.get().lower()} kas outlet {outlet} tersimpan.")
+        messagebox.showinfo("Sukses", "Transaksi supply/remise berhasil disimpan!")
+        self.muat_riwayat_supply_remise()
+
+    def muat_riwayat_supply_remise(self):
+        """Memuat ulang tabel riwayat supply/remise sesuai filter outlet yang dipilih,
+        dan memperbarui daftar pilihan outlet pada combobox filter."""
+        df_semua = self._query_supply_remise()
+        daftar_outlet = sorted(df_semua["outlet"].unique().tolist()) if not df_semua.empty else []
+        self.cmb_filter_outlet_sr["values"] = ["(Semua Outlet)"] + daftar_outlet
+        if not self.cmb_filter_outlet_sr.get():
+            self.cmb_filter_outlet_sr.current(0)
+
+        pilihan = self.cmb_filter_outlet_sr.get()
+        outlet = None if pilihan in ("", "(Semua Outlet)") else pilihan
+        df = self._query_supply_remise(outlet)
+
+        for i in self.tree_supply_remise.get_children():
+            self.tree_supply_remise.delete(i)
+        for _, row in df.iterrows():
+            tag = "supply" if row["jenis"] == "Supply" else "remise"
+            self.tree_supply_remise.insert("", END, values=(
+                row["tanggal"], row["outlet"], row["jenis"], row["mata_uang"],
+                f"{row['nominal']:,.0f}", row["keterangan"],
+            ), tags=(tag,))
 
     def _ambil_ambang_batas(self):
         """Membaca nilai ambang batas over-limit (%) dari sidebar; default 20% jika input tidak valid."""
