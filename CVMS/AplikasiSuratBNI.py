@@ -21,31 +21,33 @@ import surat_generator as suratgen
 # --- KONFIGURASI DATABASE ---
 DB_NAME = "database_bni.db"
 
-# --- PALET WARNA KORPORAT BNI (oranye & tosca, diambil dari logo.png) ---
+# --- PALET WARNA KORPORAT BNI, gaya dashboard gelap (oranye & tosca dari logo.png) ---
 WARNA_BNI_ORANGE = "#F15A23"
-WARNA_BNI_TOSCA = "#00585E"
-WARNA_BNI_TOSCA_MUDA = "#00838F"
+WARNA_BNI_TOSCA = "#00838F"
+WARNA_BNI_GELAP = "#10171F"
+WARNA_BNI_PANEL = "#1A232C"
+WARNA_BNI_GARIS = "#2B3742"
 
 BNI_THEME = ThemeDefinition(
     name="bni",
-    themetype=LIGHT,
+    themetype=DARK,
     colors=Colors(
         primary=WARNA_BNI_ORANGE,
         secondary=WARNA_BNI_TOSCA,
-        success="#2E8B57",
-        info=WARNA_BNI_TOSCA_MUDA,
+        success="#2ECC71",
+        info="#3DAFD0",
         warning="#F2A104",
-        danger="#C0392B",
-        light="#F5F6F7",
-        dark="#1B1B1B",
-        bg="#FFFFFF",
-        fg="#222222",
+        danger="#E74C3C",
+        light=WARNA_BNI_PANEL,
+        dark=WARNA_BNI_GELAP,
+        bg=WARNA_BNI_GELAP,
+        fg="#E8ECEF",
         selectbg=WARNA_BNI_ORANGE,
         selectfg="#FFFFFF",
-        border="#D9D9D9",
-        inputfg="#222222",
-        inputbg="#FFFFFF",
-        active=WARNA_BNI_TOSCA,
+        border=WARNA_BNI_GARIS,
+        inputfg="#E8ECEF",
+        inputbg=WARNA_BNI_PANEL,
+        active=WARNA_BNI_ORANGE,
     ),
 )
 
@@ -195,7 +197,7 @@ class AppBNI(ttk.Window):
         for col in self.tree["columns"]:
             self.tree.heading(col, text=kolom_label[col])
             self.tree.column(col, width=140, anchor=CENTER)
-        self.tree.tag_configure("kritis", background="#f8d7da")
+        self.tree.tag_configure("kritis", background="#5A1F1F", foreground="#FF6B6B")
         self.tree.pack(fill=BOTH, expand=YES)
 
         # Tab 2: Prediksi Pagu Kas — dashboard prediksi untuk hari berikutnya
