@@ -184,3 +184,28 @@ def validasi_dua_arah(scaler, sample_raw_value, model=None, context_vals=None, w
         "sample_normalized": normalized,
         "model_yhat": yhat,
     }
+
+
+def prediksi_besok_ma3(values, n=3):
+    """
+    Prediksi pagu buka untuk hari berikutnya dengan MA3: rata-rata dari
+    `n` nilai aktual terakhir yang tersedia di dataset.
+    """
+    last_n = np.asarray(values[-n:], dtype=float)
+    return float(last_n.mean()), last_n
+
+
+def prediksi_besok_lstm(model, scaler, values, window=WINDOW_DEFAULT):
+    """
+    Prediksi pagu buka untuk hari berikutnya dengan LSTM, menggunakan
+    `window` nilai aktual terakhir sebagai input sequence. Mengembalikan
+    hasil akhir beserta nilai-nilai antara (sequence asli, sequence
+    ternormalisasi, output mentah model sebelum inverse transform) untuk
+    keperluan panel Preview Perhitungan.
+    """
+    last_window = np.asarray(values[-window:], dtype=float)
+    scaled = scaler.transform(last_window.reshape(-1, 1)).flatten()
+    x = scaled.reshape((1, window, 1))
+    yhat_scaled = float(model.predict(x, verbose=0).flatten()[0])
+    yhat = float(scaler.inverse_transform([[yhat_scaled]])[0, 0])
+    return yhat, last_window, scaled, yhat_scaled
