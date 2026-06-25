@@ -44,6 +44,13 @@ FOOTER_LINES = [
     "www.bni.co.id",
 ]
 
+# Registry jenis surat yang didukung. Saat ini hanya "Cover Asuransi CIS" yang
+# aktif; tambahkan entri baru di sini untuk mendukung template surat lain
+# tanpa mengubah logika pemanggil (AplikasiSuratBNI.py).
+TEMPLATE_SURAT = {
+    "Cover Asuransi CIS Saldo Kas IDR dan Valas KC/KCP/KK": "cover_asuransi_cis",
+}
+
 
 def format_tanggal_indonesia(tanggal):
     """Memformat objek date/datetime menjadi 'Jakarta, DD Bulan YYYY'."""
@@ -56,12 +63,23 @@ def format_nilai(nilai, mata_uang):
     return f"{mata_uang.upper()} {teks}"
 
 
-def buat_surat_pdf(output_path, no_surat, nama_manager, tanggal, rows):
+def buat_surat_pdf(output_path, no_surat, nama_manager, tanggal, rows, jenis_surat=None):
     """
-    Membuat surat PDF "Cover Asuransi CIS Saldo Kas IDR dan Valas KC/KCP/KK".
+    Membuat surat PDF sesuai `jenis_surat` (key pada TEMPLATE_SURAT). Saat ini
+    hanya template "Cover Asuransi CIS Saldo Kas IDR dan Valas KC/KCP/KK" yang
+    terimplementasi; argumen `jenis_surat` disiapkan agar template baru dapat
+    ditambahkan tanpa mengubah pemanggil.
 
     `rows` adalah list of dict dengan key: cabang, mata_uang, saldo, pagu, over.
     """
+    kunci = TEMPLATE_SURAT.get(jenis_surat, "cover_asuransi_cis") if jenis_surat else "cover_asuransi_cis"
+    if kunci != "cover_asuransi_cis":
+        raise NotImplementedError(f"Template surat '{jenis_surat}' belum diimplementasikan.")
+    return _buat_surat_cover_asuransi_cis(output_path, no_surat, nama_manager, tanggal, rows)
+
+
+def _buat_surat_cover_asuransi_cis(output_path, no_surat, nama_manager, tanggal, rows):
+    """Implementasi template 'Cover Asuransi CIS Saldo Kas IDR dan Valas KC/KCP/KK'."""
     doc = SimpleDocTemplate(
         output_path, pagesize=A4,
         topMargin=1.5 * cm, bottomMargin=1.5 * cm,

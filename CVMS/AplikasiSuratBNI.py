@@ -64,6 +64,20 @@ class AppBNI(ttk.Window):
         self.ent_manager.insert(0, "Hasbiallah")
         self.ent_manager.pack(fill=X, pady=5)
 
+        ttk.Label(sidebar, text="Jenis Surat:").pack(anchor=W)
+        self.cmb_jenis_surat = ttk.Combobox(
+            sidebar, values=list(suratgen.TEMPLATE_SURAT.keys()), state="readonly",
+        )
+        self.cmb_jenis_surat.current(0)
+        self.cmb_jenis_surat.pack(fill=X, pady=5)
+
+        ttk.Label(sidebar, text="Ambang Batas Over (% dari Pagu):").pack(anchor=W, pady=(10, 0))
+        self.ent_ambang_batas = ttk.Entry(sidebar)
+        self.ent_ambang_batas.insert(0, "20")
+        self.ent_ambang_batas.pack(fill=X, pady=5)
+        self.ent_ambang_batas.bind("<Return>", lambda e: self._refresh_tree_preview())
+        self.ent_ambang_batas.bind("<FocusOut>", lambda e: self._refresh_tree_preview())
+
         self.btn_upload = ttk.Button(sidebar, text="Upload Excel", bootstyle="info", command=self.load_excel)
         self.btn_upload.pack(fill=X, pady=20)
 
@@ -81,10 +95,18 @@ class AppBNI(ttk.Window):
         self.tab_preview = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_preview, text="Preview Data")
         
-        self.tree = ttk.Treeview(self.tab_preview, columns=("cabang", "mata_uang", "saldo", "pagu", "over"), show="headings")
+        ttk.Label(
+            self.tab_preview,
+            text="Baris berwarna merah = over-limit melebihi ambang batas (lihat isian \"Ambang Batas Over\" di sidebar).",
+            font=("Helvetica", 8, "italic"), bootstyle="secondary",
+        ).pack(anchor=W, pady=(0, 5))
+
+        self.tree = ttk.Treeview(self.tab_preview, columns=("cabang", "mata_uang", "saldo", "pagu", "over", "over_pct"), show="headings")
+        kolom_label = {"cabang": "CABANG", "mata_uang": "MATA_UANG", "saldo": "SALDO", "pagu": "PAGU", "over": "OVER", "over_pct": "OVER (%)"}
         for col in self.tree["columns"]:
-            self.tree.heading(col, text=col.upper())
-            self.tree.column(col, width=150, anchor=CENTER)
+            self.tree.heading(col, text=kolom_label[col])
+            self.tree.column(col, width=140, anchor=CENTER)
+        self.tree.tag_configure("kritis", background="#f8d7da")
         self.tree.pack(fill=BOTH, expand=YES)
 
         # Tab 2: Prediksi Pagu Kas — dashboard prediksi untuk hari berikutnya
@@ -96,6 +118,11 @@ class AppBNI(ttk.Window):
         self.tab_perhitungan = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_perhitungan, text="Preview Perhitungan")
         self.build_tab_perhitungan()
+
+        # Tab 4: Riwayat & Tren — riwayat over-limit tersimpan dan grafik tren per cabang
+        self.tab_riwayat = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.tab_riwayat, text="Riwayat & Tren")
+        self.build_tab_riwayat()
 
     def build_tab_prediksi(self):
         """Membangun dashboard Prediksi Pagu Kas: upload dataset, lalu
@@ -210,6 +237,149 @@ class AppBNI(ttk.Window):
 
         self.canvas_pred = FigureCanvasTkAgg(self.fig_pred, master=chart_frame)
         self.canvas_pred.get_tk_widget().pack(fill=BOTH, expand=YES)
+
+    def build_tab_riwayat(self):
+        """Membangun tab Riwayat & Tren: menampilkan riwayat over-limit yang
+        tersimpan di database (filter per cabang), tombol export ke Excel,
+        dan grafik tren over-limit per cabang dari waktu ke waktu."""
+        top = ttk.Frame(self.tab_riwayat)
+        top.pack(fill=X, pady=(0, 10))
+
+        ttk.Label(top, text="Filter Cabang:").pack(side=LEFT, padx=(0, 5))
+        self.cmb_filter_cabang = ttk.Combobox(top, state="readonly", width=25)
+        self.cmb_filter_cabang.pack(side=LEFT, padx=(0, 10))
+
+        ttk.Button(top, text="Muat Riwayat", bootstyle="info",
+                   command=self.muat_riwayat).pack(side=LEFT, padx=5)
+        ttk.Button(top, text="Export ke Excel", bootstyle="secondary",
+                   command=self.export_riwayat_excel).pack(side=LEFT, padx=5)
+        ttk.Button(top, text="Tampilkan Tren Cabang", bootstyle="primary",
+                   command=self.tampilkan_tren_cabang).pack(side=LEFT, padx=5)
+
+        body = ttk.Panedwindow(self.tab_riwayat, orient=VERTICAL)
+        body.pack(fill=BOTH, expand=YES)
+
+        tabel_frame = ttk.Frame(body)
+        body.add(tabel_frame, weight=1)
+
+        self.tree_riwayat = ttk.Treeview(
+            tabel_frame,
+            columns=("tanggal", "no_surat", "cabang", "mata_uang", "saldo", "pagu", "over"),
+            show="headings", height=8,
+        )
+        label_riwayat = {
+            "tanggal": "Tanggal Input", "no_surat": "No. Surat", "cabang": "Cabang",
+            "mata_uang": "Mata Uang", "saldo": "Saldo", "pagu": "Pagu", "over": "Over",
+        }
+        for col in self.tree_riwayat["columns"]:
+            self.tree_riwayat.heading(col, text=label_riwayat[col])
+            self.tree_riwayat.column(col, width=120, anchor=CENTER)
+        self.tree_riwayat.pack(fill=BOTH, expand=YES)
+
+        chart_frame = ttk.Frame(body)
+        body.add(chart_frame, weight=1)
+
+        self.fig_tren = Figure(figsize=(9, 3), dpi=100)
+        self.ax_tren = self.fig_tren.add_subplot(111)
+        self.ax_tren.set_title("Tren Over-Limit per Cabang")
+        self.fig_tren.tight_layout()
+        self.canvas_tren = FigureCanvasTkAgg(self.fig_tren, master=chart_frame)
+        self.canvas_tren.get_tk_widget().pack(fill=BOTH, expand=YES)
+
+        self.muat_riwayat()
+
+    def _query_riwayat(self, cabang=None):
+        """Mengambil data riwayat_over dari database, opsional difilter per cabang."""
+        conn = sqlite3.connect(DB_NAME)
+        if cabang:
+            df = pd.read_sql_query(
+                "SELECT * FROM riwayat_over WHERE cabang = ? ORDER BY tanggal_input", conn, params=(cabang,),
+            )
+        else:
+            df = pd.read_sql_query("SELECT * FROM riwayat_over ORDER BY tanggal_input", conn)
+        conn.close()
+        return df
+
+    def muat_riwayat(self):
+        """Memuat ulang tabel riwayat dari database sesuai filter cabang yang dipilih,
+        dan memperbarui daftar pilihan cabang pada combobox filter."""
+        df_semua = self._query_riwayat()
+        daftar_cabang = sorted(df_semua["cabang"].unique().tolist()) if not df_semua.empty else []
+        self.cmb_filter_cabang["values"] = ["(Semua Cabang)"] + daftar_cabang
+        if not self.cmb_filter_cabang.get():
+            self.cmb_filter_cabang.current(0)
+
+        pilihan = self.cmb_filter_cabang.get()
+        cabang = None if pilihan in ("", "(Semua Cabang)") else pilihan
+        df = self._query_riwayat(cabang)
+
+        for i in self.tree_riwayat.get_children():
+            self.tree_riwayat.delete(i)
+        for _, row in df.iterrows():
+            self.tree_riwayat.insert("", END, values=(
+                row["tanggal_input"], row["no_surat"], row["cabang"], row["mata_uang"],
+                f"{row['saldo']:,.0f}", f"{row['pagu']:,.0f}", f"{row['over_limit']:,.0f}",
+            ))
+        self._df_riwayat_terkini = df
+
+    def export_riwayat_excel(self):
+        """Mengekspor riwayat over-limit yang sedang tampil ke file Excel."""
+        df = getattr(self, "_df_riwayat_terkini", pd.DataFrame())
+        if df.empty:
+            messagebox.showwarning("Peringatan", "Tidak ada data riwayat untuk diekspor.")
+            return
+        output_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")],
+            initialfile="Riwayat_Over_Limit.xlsx",
+        )
+        if not output_path:
+            return
+        try:
+            df.to_excel(output_path, index=False)
+            messagebox.showinfo("Sukses", f"Riwayat berhasil diekspor:\n{output_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Gagal mengekspor riwayat: {e}")
+
+    def tampilkan_tren_cabang(self):
+        """Menampilkan grafik tren over-limit untuk cabang yang difilter pada
+        combobox, atau rata-rata seluruh cabang jika 'Semua Cabang' dipilih."""
+        pilihan = self.cmb_filter_cabang.get()
+        cabang = None if pilihan in ("", "(Semua Cabang)") else pilihan
+        df = self._query_riwayat(cabang)
+
+        self.ax_tren.clear()
+        if df.empty:
+            self.ax_tren.set_title("Belum ada riwayat untuk ditampilkan")
+        elif cabang:
+            self.ax_tren.plot(df["tanggal_input"], df["over_limit"], marker="o")
+            self.ax_tren.set_title(f"Tren Over-Limit — {cabang}")
+            self.ax_tren.tick_params(axis="x", rotation=45)
+        else:
+            for cab, grup in df.groupby("cabang"):
+                self.ax_tren.plot(grup["tanggal_input"], grup["over_limit"], marker="o", label=cab)
+            self.ax_tren.set_title("Tren Over-Limit — Semua Cabang")
+            self.ax_tren.legend(fontsize=7)
+            self.ax_tren.tick_params(axis="x", rotation=45)
+        self.ax_tren.set_ylabel("Over-Limit")
+        self.fig_tren.tight_layout()
+        self.canvas_tren.draw()
+
+    def _ambil_ambang_batas(self):
+        """Membaca nilai ambang batas over-limit (%) dari sidebar; default 20% jika input tidak valid."""
+        try:
+            return float(self.ent_ambang_batas.get())
+        except (ValueError, AttributeError):
+            return 20.0
+
+    def _refresh_tree_preview(self):
+        """Mengisi ulang Treeview Preview Data, menandai baris 'kritis' (merah) jika
+        persentase over-limit melebihi ambang batas yang diatur pengguna di sidebar."""
+        ambang = self._ambil_ambang_batas()
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        for _, row in self.df_current.iterrows():
+            tag = "kritis" if row["Over %"] >= ambang else ""
+            self.tree.insert("", END, values=list(row), tags=(tag,) if tag else ())
 
     def _isi_teks(self, widget, isi):
         """Mengisi widget Text read-only dengan konten baru."""
@@ -362,11 +532,9 @@ class AppBNI(ttk.Window):
                         data_over.append([cabang, curr, saldo, pagu, over])
             
             self.df_current = pd.DataFrame(data_over, columns=["Cabang", "Mata Uang", "Saldo", "Pagu", "Over"])
-            
-            # Refresh Treeview
-            for i in self.tree.get_children(): self.tree.delete(i)
-            for _, row in self.df_current.iterrows():
-                self.tree.insert("", END, values=list(row))
+            self.df_current["Over %"] = (self.df_current["Over"] / self.df_current["Pagu"] * 100).round(2)
+
+            self._refresh_tree_preview()
             
             messagebox.showinfo("Sukses", f"Berhasil memuat {len(self.df_current)} data.")
         except Exception as e:
@@ -392,6 +560,8 @@ class AppBNI(ttk.Window):
                       (tgl, no_surat, row['Cabang'], row['Mata Uang'], row['Saldo'], row['Pagu'], row['Over']))
         conn.commit()
         conn.close()
+        if hasattr(self, "tree_riwayat"):
+            self.muat_riwayat()
         messagebox.showinfo("Sukses", "Data berhasil disimpan ke database!")
 
     def cetak_surat(self):
@@ -427,8 +597,9 @@ class AppBNI(ttk.Window):
                 }
                 for _, row in self.df_current.iterrows()
             ]
+            jenis_surat = self.cmb_jenis_surat.get() or None
             suratgen.buat_surat_pdf(
-                output_path, no_surat, nama_manager, datetime.now(), rows,
+                output_path, no_surat, nama_manager, datetime.now(), rows, jenis_surat=jenis_surat,
             )
             messagebox.showinfo("Sukses", f"Surat berhasil dibuat:\n{output_path}")
         except Exception as e:
