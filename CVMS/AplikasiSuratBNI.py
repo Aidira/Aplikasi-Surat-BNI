@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from models import predictor as pred
+import surat_generator as suratgen
 
 # --- KONFIGURASI DATABASE ---
 DB_NAME = "database_bni.db"
@@ -68,6 +69,9 @@ class AppBNI(ttk.Window):
 
         self.btn_save = ttk.Button(sidebar, text="Simpan ke DB", bootstyle="success", command=self.save_data)
         self.btn_save.pack(fill=X, pady=5)
+
+        self.btn_cetak = ttk.Button(sidebar, text="Cetak Surat (PDF)", bootstyle="warning", command=self.cetak_surat)
+        self.btn_cetak.pack(fill=X, pady=5)
 
         # Main Area (Tabs)
         self.notebook = ttk.Notebook(self)
@@ -389,6 +393,46 @@ class AppBNI(ttk.Window):
         conn.commit()
         conn.close()
         messagebox.showinfo("Sukses", "Data berhasil disimpan ke database!")
+
+    def cetak_surat(self):
+        """Membuat surat PDF 'Cover Asuransi CIS Saldo Kas IDR dan Valas KC/KCP/KK'
+        dari data over-limit yang sedang dimuat, lalu menyimpannya ke file PDF."""
+        if self.df_current.empty:
+            messagebox.showwarning("Peringatan", "Data kosong! Upload Excel data over-limit terlebih dahulu.")
+            return
+
+        no_surat = self.ent_no_surat.get()
+        if not no_surat:
+            messagebox.showwarning("Peringatan", "Isi nomor surat!")
+            return
+
+        nama_manager = self.ent_manager.get() or "Hasbiallah"
+
+        output_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"Surat_Over_Limit_{no_surat.replace('/', '-')}.pdf",
+        )
+        if not output_path:
+            return
+
+        try:
+            rows = [
+                {
+                    "cabang": row["Cabang"],
+                    "mata_uang": row["Mata Uang"],
+                    "saldo": row["Saldo"],
+                    "pagu": row["Pagu"],
+                    "over": row["Over"],
+                }
+                for _, row in self.df_current.iterrows()
+            ]
+            suratgen.buat_surat_pdf(
+                output_path, no_surat, nama_manager, datetime.now(), rows,
+            )
+            messagebox.showinfo("Sukses", f"Surat berhasil dibuat:\n{output_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Gagal membuat surat PDF: {e}")
 
 if __name__ == "__main__":
     app = AppBNI()
