@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+from ttkbootstrap.style import Colors, ThemeDefinition
 import pandas as pd
 import numpy as np
 import sqlite3
@@ -19,6 +20,34 @@ import surat_generator as suratgen
 
 # --- KONFIGURASI DATABASE ---
 DB_NAME = "database_bni.db"
+
+# --- PALET WARNA KORPORAT BNI (oranye & tosca, diambil dari logo.png) ---
+WARNA_BNI_ORANGE = "#F15A23"
+WARNA_BNI_TOSCA = "#00585E"
+WARNA_BNI_TOSCA_MUDA = "#00838F"
+
+BNI_THEME = ThemeDefinition(
+    name="bni",
+    themetype=LIGHT,
+    colors=Colors(
+        primary=WARNA_BNI_ORANGE,
+        secondary=WARNA_BNI_TOSCA,
+        success="#2E8B57",
+        info=WARNA_BNI_TOSCA_MUDA,
+        warning="#F2A104",
+        danger="#C0392B",
+        light="#F5F6F7",
+        dark="#1B1B1B",
+        bg="#FFFFFF",
+        fg="#222222",
+        selectbg=WARNA_BNI_ORANGE,
+        selectfg="#FFFFFF",
+        border="#D9D9D9",
+        inputfg="#222222",
+        inputbg="#FFFFFF",
+        active=WARNA_BNI_TOSCA,
+    ),
+)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -41,54 +70,114 @@ def init_db():
 # --- LOGIKA APLIKASI ---
 class AppBNI(ttk.Window):
     def __init__(self):
-        super().__init__(themename="flatly", title="BNI Asuransi Dashboard - Desktop")
-        self.geometry("1100x700")
+        super().__init__(title="BNI - Manajemen Over-Limit Kas KC/KCP/KK")
+        self.style.register_theme(BNI_THEME)
+        self.style.theme_use("bni")
+        self.geometry("1200x760")
+        self.minsize(1000, 650)
         init_db()
-        
+
         self.df_current = pd.DataFrame()
+        self.build_header()
         self.create_widgets()
+        self.build_statusbar()
+
+    def build_header(self):
+        """Membangun banner header korporat (logo BNI + judul aplikasi) di
+        bagian atas jendela, agar tampilan terasa seperti aplikasi perbankan resmi."""
+        header = ttk.Frame(self, bootstyle="secondary")
+        header.pack(side=TOP, fill=X)
+
+        isi = ttk.Frame(header, bootstyle="secondary", padding=(20, 12))
+        isi.pack(fill=X)
+
+        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        if os.path.exists(logo_path):
+            img = Image.open(logo_path)
+            ratio = img.height / img.width
+            img = img.resize((110, int(110 * ratio)))
+            self._logo_img = ImageTk.PhotoImage(img)
+            ttk.Label(isi, image=self._logo_img, bootstyle="inverse-secondary").pack(side=LEFT, padx=(0, 15))
+
+        teks_frame = ttk.Frame(isi, bootstyle="secondary")
+        teks_frame.pack(side=LEFT, fill=Y)
+        ttk.Label(
+            teks_frame, text="Manajemen Over-Limit Kas KC/KCP/KK",
+            font=("Helvetica", 16, "bold"), bootstyle="inverse-secondary",
+        ).pack(anchor=W)
+        ttk.Label(
+            teks_frame, text="BNI Kantor Cabang Tebet — Prototipe Internal",
+            font=("Helvetica", 9), bootstyle="inverse-secondary",
+        ).pack(anchor=W)
+
+    def build_statusbar(self):
+        """Status bar di bagian bawah jendela menampilkan ringkasan singkat data yang dimuat."""
+        bar = ttk.Frame(self, bootstyle="light", padding=(15, 4))
+        bar.pack(side=BOTTOM, fill=X)
+        self.lbl_status = ttk.Label(
+            bar, text="Siap. Belum ada data dimuat.", font=("Helvetica", 8), bootstyle="secondary",
+        )
+        self.lbl_status.pack(side=LEFT)
+
+    def _set_status(self, teks):
+        if hasattr(self, "lbl_status"):
+            self.lbl_status.config(text=teks)
 
     def create_widgets(self):
+        main_area = ttk.Frame(self)
+        main_area.pack(side=TOP, fill=BOTH, expand=YES)
+
         # Sidebar
-        sidebar = ttk.Frame(self, bootstyle="light", width=250, padding=10)
+        sidebar = ttk.Frame(main_area, bootstyle="light", width=270, padding=15)
         sidebar.pack(side=LEFT, fill=Y)
 
-        ttk.Label(sidebar, text="PENGATURAN", font=("Helvetica", 12, "bold")).pack(pady=10)
-        
-        ttk.Label(sidebar, text="Nomor Surat:").pack(anchor=W)
-        self.ent_no_surat = ttk.Entry(sidebar)
-        self.ent_no_surat.pack(fill=X, pady=5)
+        ttk.Label(
+            sidebar, text="PENGATURAN SURAT", font=("Helvetica", 11, "bold"),
+            bootstyle="secondary",
+        ).pack(anchor=W, pady=(0, 12))
 
-        ttk.Label(sidebar, text="Nama Manager:").pack(anchor=W)
-        self.ent_manager = ttk.Entry(sidebar)
+        grup_surat = ttk.Labelframe(sidebar, text="Data Surat", padding=10, bootstyle="secondary")
+        grup_surat.pack(fill=X, pady=(0, 12))
+
+        ttk.Label(grup_surat, text="Nomor Surat:").pack(anchor=W)
+        self.ent_no_surat = ttk.Entry(grup_surat)
+        self.ent_no_surat.pack(fill=X, pady=(2, 8))
+
+        ttk.Label(grup_surat, text="Nama Manager:").pack(anchor=W)
+        self.ent_manager = ttk.Entry(grup_surat)
         self.ent_manager.insert(0, "Hasbiallah")
-        self.ent_manager.pack(fill=X, pady=5)
+        self.ent_manager.pack(fill=X, pady=(2, 8))
 
-        ttk.Label(sidebar, text="Jenis Surat:").pack(anchor=W)
+        ttk.Label(grup_surat, text="Jenis Surat:").pack(anchor=W)
         self.cmb_jenis_surat = ttk.Combobox(
-            sidebar, values=list(suratgen.TEMPLATE_SURAT.keys()), state="readonly",
+            grup_surat, values=list(suratgen.TEMPLATE_SURAT.keys()), state="readonly",
         )
         self.cmb_jenis_surat.current(0)
-        self.cmb_jenis_surat.pack(fill=X, pady=5)
+        self.cmb_jenis_surat.pack(fill=X, pady=(2, 0))
 
-        ttk.Label(sidebar, text="Ambang Batas Over (% dari Pagu):").pack(anchor=W, pady=(10, 0))
-        self.ent_ambang_batas = ttk.Entry(sidebar)
+        grup_ambang = ttk.Labelframe(sidebar, text="Ambang Batas Peringatan", padding=10, bootstyle="secondary")
+        grup_ambang.pack(fill=X, pady=(0, 12))
+
+        ttk.Label(grup_ambang, text="Over-Limit (% dari Pagu):").pack(anchor=W)
+        self.ent_ambang_batas = ttk.Entry(grup_ambang)
         self.ent_ambang_batas.insert(0, "20")
-        self.ent_ambang_batas.pack(fill=X, pady=5)
+        self.ent_ambang_batas.pack(fill=X, pady=(2, 0))
         self.ent_ambang_batas.bind("<Return>", lambda e: self._refresh_tree_preview())
         self.ent_ambang_batas.bind("<FocusOut>", lambda e: self._refresh_tree_preview())
 
+        ttk.Separator(sidebar).pack(fill=X, pady=10)
+
         self.btn_upload = ttk.Button(sidebar, text="Upload Excel", bootstyle="info", command=self.load_excel)
-        self.btn_upload.pack(fill=X, pady=20)
+        self.btn_upload.pack(fill=X, pady=(0, 8))
 
-        self.btn_save = ttk.Button(sidebar, text="Simpan ke DB", bootstyle="success", command=self.save_data)
-        self.btn_save.pack(fill=X, pady=5)
+        self.btn_save = ttk.Button(sidebar, text="Simpan ke Database", bootstyle="success", command=self.save_data)
+        self.btn_save.pack(fill=X, pady=(0, 8))
 
-        self.btn_cetak = ttk.Button(sidebar, text="Cetak Surat (PDF)", bootstyle="warning", command=self.cetak_surat)
-        self.btn_cetak.pack(fill=X, pady=5)
+        self.btn_cetak = ttk.Button(sidebar, text="Cetak Surat (PDF)", bootstyle="primary", command=self.cetak_surat)
+        self.btn_cetak.pack(fill=X)
 
         # Main Area (Tabs)
-        self.notebook = ttk.Notebook(self)
+        self.notebook = ttk.Notebook(main_area, bootstyle="secondary")
         self.notebook.pack(side=LEFT, fill=BOTH, expand=YES, padx=10, pady=10)
 
         # Tab 1: Data Editor / Preview
@@ -535,9 +624,11 @@ class AppBNI(ttk.Window):
             self.df_current["Over %"] = (self.df_current["Over"] / self.df_current["Pagu"] * 100).round(2)
 
             self._refresh_tree_preview()
-            
+
+            self._set_status(f"{len(self.df_current)} data over-limit termuat dari {os.path.basename(path)}.")
             messagebox.showinfo("Sukses", f"Berhasil memuat {len(self.df_current)} data.")
         except Exception as e:
+            self._set_status("Gagal memuat file Excel.")
             messagebox.showerror("Error", f"Gagal membaca file: {e}")
 
     def save_data(self):
@@ -562,6 +653,7 @@ class AppBNI(ttk.Window):
         conn.close()
         if hasattr(self, "tree_riwayat"):
             self.muat_riwayat()
+        self._set_status(f"Data tersimpan ke database dengan nomor surat {no_surat}.")
         messagebox.showinfo("Sukses", "Data berhasil disimpan ke database!")
 
     def cetak_surat(self):
@@ -601,8 +693,10 @@ class AppBNI(ttk.Window):
             suratgen.buat_surat_pdf(
                 output_path, no_surat, nama_manager, datetime.now(), rows, jenis_surat=jenis_surat,
             )
+            self._set_status(f"Surat PDF berhasil dibuat: {os.path.basename(output_path)}")
             messagebox.showinfo("Sukses", f"Surat berhasil dibuat:\n{output_path}")
         except Exception as e:
+            self._set_status("Gagal membuat surat PDF.")
             messagebox.showerror("Error", f"Gagal membuat surat PDF: {e}")
 
 if __name__ == "__main__":
