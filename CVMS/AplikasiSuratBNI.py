@@ -91,9 +91,31 @@ class AppBNI(ttk.Window):
         init_db()
 
         self.df_current = pd.DataFrame()
+        self._setup_styles()
         self.build_header()
         self.create_widgets()
         self.build_statusbar()
+
+    def _setup_styles(self):
+        """Menata ulang gaya widget global (font, padding, tinggi baris tabel)
+        agar tampilan lebih rapi dan konsisten di seluruh aplikasi."""
+        style = self.style
+        style.configure(".", font=("Helvetica", 10))
+        style.configure("TButton", font=("Helvetica", 10, "bold"), padding=(10, 9))
+        style.configure("TLabelframe.Label", font=("Helvetica", 10, "bold"))
+        style.configure("TLabelframe", borderwidth=1)
+        style.configure(
+            "Treeview", font=("Helvetica", 9), rowheight=26,
+            fieldbackground=WARNA_BNI_PANEL, borderwidth=0,
+        )
+        style.configure(
+            "Treeview.Heading", font=("Helvetica", 9, "bold"),
+            padding=(6, 8), foreground="#FFFFFF", background=WARNA_BNI_GARIS,
+        )
+        style.map("Treeview", background=[("selected", WARNA_BNI_TOSCA)])
+        style.configure("TNotebook.Tab", font=("Helvetica", 10, "bold"), padding=(16, 8))
+        style.configure("TEntry", padding=(6, 6))
+        style.configure("TCombobox", padding=(6, 6))
 
     def build_header(self):
         """Membangun banner header korporat (logo BNI + judul aplikasi) di
@@ -123,12 +145,15 @@ class AppBNI(ttk.Window):
             font=("Helvetica", 9), bootstyle="inverse-secondary",
         ).pack(anchor=W)
 
+        ttk.Frame(self, bootstyle="primary", height=3).pack(side=TOP, fill=X)
+
     def build_statusbar(self):
         """Status bar di bagian bawah jendela menampilkan ringkasan singkat data yang dimuat."""
-        bar = ttk.Frame(self, bootstyle="light", padding=(15, 4))
+        ttk.Separator(self).pack(side=BOTTOM, fill=X)
+        bar = ttk.Frame(self, bootstyle="light", padding=(18, 7))
         bar.pack(side=BOTTOM, fill=X)
         self.lbl_status = ttk.Label(
-            bar, text="Siap. Belum ada data dimuat.", font=("Helvetica", 8), bootstyle="secondary",
+            bar, text="Siap. Belum ada data dimuat.", font=("Helvetica", 9), bootstyle="secondary",
         )
         self.lbl_status.pack(side=LEFT)
 
@@ -136,62 +161,82 @@ class AppBNI(ttk.Window):
         if hasattr(self, "lbl_status"):
             self.lbl_status.config(text=teks)
 
+    @staticmethod
+    def _gaya_chart_gelap(fig, *axes):
+        """Menerapkan palet gelap (latar panel, teks & garis terang) pada
+        figure/axes matplotlib agar konsisten dengan tema dashboard gelap,
+        alih-alih latar putih default yang kontras secara mencolok."""
+        fig.patch.set_facecolor(WARNA_BNI_PANEL)
+        for ax in axes:
+            ax.set_facecolor(WARNA_BNI_PANEL)
+            ax.tick_params(colors="#E8ECEF", labelsize=8)
+            ax.title.set_color("#E8ECEF")
+            ax.xaxis.label.set_color("#E8ECEF")
+            ax.yaxis.label.set_color("#E8ECEF")
+            for spine in ax.spines.values():
+                spine.set_color(WARNA_BNI_GARIS)
+            legenda = ax.get_legend()
+            if legenda:
+                legenda.get_frame().set_facecolor(WARNA_BNI_PANEL)
+                for teks in legenda.get_texts():
+                    teks.set_color("#E8ECEF")
+
     def create_widgets(self):
         main_area = ttk.Frame(self)
         main_area.pack(side=TOP, fill=BOTH, expand=YES)
 
         # Sidebar
-        sidebar = ttk.Frame(main_area, bootstyle="light", width=270, padding=15)
+        sidebar = ttk.Frame(main_area, bootstyle="light", width=280, padding=(18, 20))
         sidebar.pack(side=LEFT, fill=Y)
 
         ttk.Label(
-            sidebar, text="PENGATURAN SURAT", font=("Helvetica", 11, "bold"),
-            bootstyle="secondary",
-        ).pack(anchor=W, pady=(0, 12))
+            sidebar, text="PENGATURAN SURAT", font=("Helvetica", 12, "bold"),
+            bootstyle="primary",
+        ).pack(anchor=W, pady=(0, 16))
 
-        grup_surat = ttk.Labelframe(sidebar, text="Data Surat", padding=10, bootstyle="secondary")
-        grup_surat.pack(fill=X, pady=(0, 12))
+        grup_surat = ttk.Labelframe(sidebar, text="Data Surat", padding=14, bootstyle="secondary")
+        grup_surat.pack(fill=X, pady=(0, 14))
 
-        ttk.Label(grup_surat, text="Nomor Surat:").pack(anchor=W)
+        ttk.Label(grup_surat, text="Nomor Surat", font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W)
         self.ent_no_surat = ttk.Entry(grup_surat)
-        self.ent_no_surat.pack(fill=X, pady=(2, 8))
+        self.ent_no_surat.pack(fill=X, pady=(3, 10))
 
-        ttk.Label(grup_surat, text="Nama Manager:").pack(anchor=W)
+        ttk.Label(grup_surat, text="Nama Manager", font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W)
         self.ent_manager = ttk.Entry(grup_surat)
         self.ent_manager.insert(0, "Hasbiallah")
-        self.ent_manager.pack(fill=X, pady=(2, 8))
+        self.ent_manager.pack(fill=X, pady=(3, 10))
 
-        ttk.Label(grup_surat, text="Jenis Surat:").pack(anchor=W)
+        ttk.Label(grup_surat, text="Jenis Surat", font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W)
         self.cmb_jenis_surat = ttk.Combobox(
             grup_surat, values=list(suratgen.TEMPLATE_SURAT.keys()), state="readonly",
         )
         self.cmb_jenis_surat.current(0)
-        self.cmb_jenis_surat.pack(fill=X, pady=(2, 0))
+        self.cmb_jenis_surat.pack(fill=X, pady=(3, 0))
 
-        grup_ambang = ttk.Labelframe(sidebar, text="Ambang Batas Peringatan", padding=10, bootstyle="secondary")
-        grup_ambang.pack(fill=X, pady=(0, 12))
+        grup_ambang = ttk.Labelframe(sidebar, text="Ambang Batas Peringatan", padding=14, bootstyle="secondary")
+        grup_ambang.pack(fill=X, pady=(0, 16))
 
-        ttk.Label(grup_ambang, text="Over-Limit (% dari Pagu):").pack(anchor=W)
+        ttk.Label(grup_ambang, text="Over-Limit (% dari Pagu)", font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W)
         self.ent_ambang_batas = ttk.Entry(grup_ambang)
         self.ent_ambang_batas.insert(0, "20")
-        self.ent_ambang_batas.pack(fill=X, pady=(2, 0))
+        self.ent_ambang_batas.pack(fill=X, pady=(3, 0))
         self.ent_ambang_batas.bind("<Return>", lambda e: self._refresh_tree_preview())
         self.ent_ambang_batas.bind("<FocusOut>", lambda e: self._refresh_tree_preview())
 
-        ttk.Separator(sidebar).pack(fill=X, pady=10)
+        ttk.Separator(sidebar).pack(fill=X, pady=(0, 16))
 
         self.btn_upload = ttk.Button(sidebar, text="Upload Excel", bootstyle="info", command=self.load_excel)
-        self.btn_upload.pack(fill=X, pady=(0, 8))
+        self.btn_upload.pack(fill=X, pady=(0, 10))
 
         self.btn_save = ttk.Button(sidebar, text="Simpan ke Database", bootstyle="success", command=self.save_data)
-        self.btn_save.pack(fill=X, pady=(0, 8))
+        self.btn_save.pack(fill=X, pady=(0, 10))
 
         self.btn_cetak = ttk.Button(sidebar, text="Cetak Surat (PDF)", bootstyle="primary", command=self.cetak_surat)
         self.btn_cetak.pack(fill=X)
 
         # Main Area (Tabs)
         self.notebook = ttk.Notebook(main_area, bootstyle="secondary")
-        self.notebook.pack(side=LEFT, fill=BOTH, expand=YES, padx=10, pady=10)
+        self.notebook.pack(side=LEFT, fill=BOTH, expand=YES, padx=(14, 16), pady=16)
 
         # Tab 1: Data Editor / Preview
         self.tab_preview = ttk.Frame(self.notebook, padding=10)
@@ -340,6 +385,7 @@ class AppBNI(ttk.Window):
         self.ax_lstm = self.fig_pred.add_subplot(122)
         self.ax_ma3.set_title("Aktual vs MA3")
         self.ax_lstm.set_title("Aktual vs LSTM")
+        self._gaya_chart_gelap(self.fig_pred, self.ax_ma3, self.ax_lstm)
         self.fig_pred.tight_layout()
 
         self.canvas_pred = FigureCanvasTkAgg(self.fig_pred, master=chart_frame)
@@ -389,6 +435,7 @@ class AppBNI(ttk.Window):
         self.fig_tren = Figure(figsize=(9, 3), dpi=100)
         self.ax_tren = self.fig_tren.add_subplot(111)
         self.ax_tren.set_title("Tren Over-Limit per Cabang")
+        self._gaya_chart_gelap(self.fig_tren, self.ax_tren)
         self.fig_tren.tight_layout()
         self.canvas_tren = FigureCanvasTkAgg(self.fig_tren, master=chart_frame)
         self.canvas_tren.get_tk_widget().pack(fill=BOTH, expand=YES)
@@ -468,6 +515,7 @@ class AppBNI(ttk.Window):
             self.ax_tren.legend(fontsize=7)
             self.ax_tren.tick_params(axis="x", rotation=45)
         self.ax_tren.set_ylabel("Over-Limit")
+        self._gaya_chart_gelap(self.fig_tren, self.ax_tren)
         self.fig_tren.tight_layout()
         self.canvas_tren.draw()
 
@@ -740,6 +788,7 @@ class AppBNI(ttk.Window):
                     "LSTM tidak aktif — TensorFlow tidak tersedia di environment ini.",
                 )
 
+            self._gaya_chart_gelap(self.fig_pred, self.ax_ma3, self.ax_lstm)
             self.fig_pred.tight_layout()
             self.canvas_pred.draw()
 
