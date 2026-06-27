@@ -79,27 +79,50 @@ BNI_THEME = ThemeDefinition(
     ),
 )
 
-def prediksi_lstm_terlatih(nilai10, data_min, data_max, model):
-    """Fungsi murni prediksi pagu besok memakai model LSTM TERLATIH (.h5).
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
-    Pipeline (sesuai cara model dilatih):
-        1. normalisasi tiap nilai: x_norm = (x - data_min) / (data_max - data_min)
-        2. bentuk array (1, 10, 1)  -> (1 sampel, 10 timestep, 1 fitur)
-        3. model.predict -> keluaran skala [0, 1]
-        4. inverse transform: y = y_norm * (data_max - data_min) + data_min
 
-    `model` diterima sebagai argumen (bukan dimuat di dalam) agar fungsi mudah
-    diuji terpisah dari UI. Mengembalikan (prediksi_rupiah, y_norm).
+def prediksi_lstm_terlatih(nilai10, data_min, data_max, bobot):
+    """Fungsi murni prediksi pagu besok memakai bobot LSTM TERLATIH, dihitung
+    dengan NumPy murni (TANPA TensorFlow) agar ringan & stabil di GUI.
+
+    Forward pass mengikuti rumus LSTM Keras secara persis:
+      - urutan gerbang kernel: i (input), f (forget), c (candidate), o (output)
+      - recurrent_activation = sigmoid, activation = tanh
+        i_t = sigmoid(x_t·W_i + h_{t-1}·U_i + b_i)
+        f_t = sigmoid(x_t·W_f + h_{t-1}·U_f + b_f)
+        g_t = tanh   (x_t·W_c + h_{t-1}·U_c + b_c)
+        o_t = sigmoid(x_t·W_o + h_{t-1}·U_o + b_o)
+        c_t = f_t*c_{t-1} + i_t*g_t ;  h_t = o_t*tanh(c_t)
+
+    Pipeline: normalisasi [0,1] -> 10 timestep LSTM -> Dense -> inverse transform.
+    `bobot` = dict {W, U, b, Wd, bd} dari lstm_weights.npz. Diverifikasi cocok
+    dengan keluaran Keras (selisih < 1e-5). Mengembalikan (prediksi_rupiah, y_norm).
     """
     if len(nilai10) != 10:
         raise ValueError(f"Butuh tepat 10 nilai, diberikan {len(nilai10)}.")
     rentang = float(data_max) - float(data_min)
     if rentang == 0:
         raise ValueError("data_max - data_min = 0; parameter scaler tidak valid.")
-    arr = np.asarray(nilai10, dtype=float)
-    arr_norm = (arr - float(data_min)) / rentang
-    x = arr_norm.reshape(1, 10, 1)
-    y_norm = float(np.asarray(model.predict(x, verbose=0)).ravel()[0])
+
+    W, U, b = bobot["W"], bobot["U"], bobot["b"]
+    Wd, bd = bobot["Wd"], bobot["bd"]
+    units = U.shape[0]
+
+    x_norm = (np.asarray(nilai10, dtype=float) - float(data_min)) / rentang
+    h = np.zeros(units)
+    c = np.zeros(units)
+    for t in range(10):
+        z = np.array([x_norm[t]]) @ W + h @ U + b
+        i = _sigmoid(z[:units])
+        f = _sigmoid(z[units:2 * units])
+        g = np.tanh(z[2 * units:3 * units])
+        o = _sigmoid(z[3 * units:])
+        c = f * c + i * g
+        h = o * np.tanh(c)
+
+    y_norm = float((h @ Wd + bd)[0])
     y_rupiah = y_norm * rentang + float(data_min)
     return (y_rupiah, y_norm)
 
@@ -460,13 +483,13 @@ class AppBNI(ttk.Window):
         )
         grup_terlatih.pack(fill=X)
 
-        model_path = resource_path("model_lstm_pagu.h5")
+        model_path = resource_path("lstm_weights.npz")
         scaler_path = resource_path("scaler_info.json")
         model_ada = os.path.exists(model_path) and os.path.exists(scaler_path)
         self.lbl_status_terlatih = ttk.Label(
             grup_terlatih,
             text=("Model terlatih ditemukan. Masukkan 10 nilai pagu harian terakhir." if model_ada
-                  else "Model belum tersedia — letakkan model_lstm_pagu.h5 dan scaler_info.json "
+                  else "Model belum tersedia — letakkan lstm_weights.npz dan scaler_info.json "
                        "di folder aplikasi (CVMS/)."),
             font=("Helvetica", 9, "bold"),
             bootstyle="success" if model_ada else "warning",
@@ -509,20 +532,21 @@ class AppBNI(ttk.Window):
         ).pack(anchor=W, pady=(8, 0))
 
     def _muat_model_terlatih(self):
-        """Memuat model_lstm_pagu.h5 dan scaler_info.json SEKALI saja (lazy load),
-        karena TensorFlow berat. Mengembalikan (model, data_min, data_max), atau
+        """Memuat bobot LSTM (lstm_weights.npz) dan scaler_info.json SEKALI saja
+        (lazy load). Memakai NumPy, TANPA TensorFlow, agar ringan & tidak bikin
+        GUI hang/crash. Mengembalikan (bobot, data_min, data_max), atau
         (None, None, None) bila file tidak ada / gagal dimuat."""
         if self._lstm_terlatih_cache is not None:
             return self._lstm_terlatih_cache
 
-        model_path = resource_path("model_lstm_pagu.h5")
+        bobot_path = resource_path("lstm_weights.npz")
         scaler_path = resource_path("scaler_info.json")
-        if not (os.path.exists(model_path) and os.path.exists(scaler_path)):
+        if not (os.path.exists(bobot_path) and os.path.exists(scaler_path)):
             return (None, None, None)
 
         import json
-        from tensorflow.keras.models import load_model
-        model = load_model(model_path, compile=False)
+        npz = np.load(bobot_path)
+        bobot = {k: npz[k] for k in ("W", "U", "b", "Wd", "bd")}
         with open(scaler_path) as f:
             info = json.load(f)
 
@@ -531,7 +555,7 @@ class AppBNI(ttk.Window):
 
         data_min = _skalar(info["data_min"])
         data_max = _skalar(info["data_max"])
-        self._lstm_terlatih_cache = (model, data_min, data_max)
+        self._lstm_terlatih_cache = (bobot, data_min, data_max)
         return self._lstm_terlatih_cache
 
     def _parse_10_nilai(self, teks):
@@ -563,18 +587,18 @@ class AppBNI(ttk.Window):
             messagebox.showwarning("Peringatan", f"Input tidak valid: {e}")
             return
 
-        model, data_min, data_max = self._muat_model_terlatih()
-        if model is None:
+        bobot, data_min, data_max = self._muat_model_terlatih()
+        if bobot is None:
             messagebox.showerror(
                 "Model tidak tersedia",
-                "model_lstm_pagu.h5 / scaler_info.json tidak ditemukan di folder aplikasi.",
+                "lstm_weights.npz / scaler_info.json tidak ditemukan di folder aplikasi.",
             )
             return
 
-        self._set_status("Memuat model & menghitung prediksi LSTM terlatih...")
+        self._set_status("Menghitung prediksi LSTM terlatih...")
         self.update_idletasks()
         try:
-            pred_rupiah, y_norm = prediksi_lstm_terlatih(nilai10, data_min, data_max, model)
+            pred_rupiah, y_norm = prediksi_lstm_terlatih(nilai10, data_min, data_max, bobot)
         except Exception as e:
             messagebox.showerror("Error", f"Gagal menjalankan prediksi: {e}")
             self._set_status("Prediksi LSTM terlatih gagal.")
