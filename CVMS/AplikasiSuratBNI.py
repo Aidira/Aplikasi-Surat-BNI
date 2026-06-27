@@ -917,8 +917,11 @@ class AppBNI(ttk.Window):
         #     MA3 ditampilkan sebagai pembanding. Tanpa menu pilihan. ---
         grup_pred = ttk.Labelframe(atas, text="Sumber Prediksi", padding=14, bootstyle="secondary")
         grup_pred.pack(side=LEFT, fill=Y, padx=(0, 12))
-        self.lbl_or_tanggal = ttk.Label(grup_pred, text="Prediksi untuk: -", font=("Helvetica", 9))
-        self.lbl_or_tanggal.pack(anchor=W, pady=(0, 8))
+
+        ttk.Label(grup_pred, text="Tanggal prediksi (untuk):", font=("Helvetica", 9)).pack(anchor=W)
+        self.ent_or_tanggal = ttk.Entry(grup_pred, width=18)
+        self.ent_or_tanggal.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.ent_or_tanggal.pack(anchor=W, pady=(2, 10))
 
         ttk.Label(grup_pred, text="LSTM (dipakai untuk keputusan):",
                   font=("Helvetica", 9), bootstyle="info").pack(anchor=W)
@@ -1004,8 +1007,11 @@ class AppBNI(ttk.Window):
         ma3 = f"Rp {self.pred_besok_ma3:,.0f}" if self.pred_besok_ma3 is not None else "Rp -"
         self.lbl_or_pred_terlatih.config(text=terlatih)
         self.lbl_or_pred_ma3.config(text=ma3)
-        tgl = self.tanggal_besok_pred
-        self.lbl_or_tanggal.config(text=f"Prediksi untuk: {tgl}" if tgl else "Prediksi untuk: -")
+        # Isi otomatis field tanggal hanya bila prediksi berasal dari upload dataset
+        # (punya tanggal). Untuk input manual, biarkan tanggal yang diketik user.
+        if self.tanggal_besok_pred and hasattr(self, "ent_or_tanggal"):
+            self.ent_or_tanggal.delete(0, END)
+            self.ent_or_tanggal.insert(0, str(self.tanggal_besok_pred))
 
     def _ambil_prediksi_terpilih(self):
         """Mengembalikan (nama_model, nilai_prediksi) untuk keputusan Order/Remise.
@@ -1071,7 +1077,7 @@ class AppBNI(ttk.Window):
             messagebox.showwarning("Peringatan", "Hitung keputusan terlebih dahulu sebelum menyimpan.")
             return
 
-        tgl = str(self.tanggal_besok_pred) if self.tanggal_besok_pred else datetime.now().strftime("%Y-%m-%d")
+        tgl = self.ent_or_tanggal.get().strip() or datetime.now().strftime("%Y-%m-%d")
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute(
