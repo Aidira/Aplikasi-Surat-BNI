@@ -5,8 +5,19 @@
 # ============================================================
 set -e
 
+# Pilih interpreter Python terbaik yang tersedia (disarankan 3.11/3.12;
+# Python 3.9 bawaan macOS terlalu lama untuk TensorFlow versi baru).
+if command -v python3.12 >/dev/null 2>&1; then
+    PY=python3.12
+elif command -v python3.11 >/dev/null 2>&1; then
+    PY=python3.11
+else
+    PY=python3
+fi
+echo "Menggunakan Python: $($PY --version)"
+
 echo "[1/4] Membuat virtual environment..."
-python3 -m venv build_env
+"$PY" -m venv build_env
 source build_env/bin/activate
 
 echo "[2/4] Memasang dependensi (termasuk TensorFlow, agak lama)..."
