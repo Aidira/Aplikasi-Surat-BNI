@@ -51,6 +51,26 @@ BNI_THEME = ThemeDefinition(
     ),
 )
 
+def hitung_order_remise(prediksi_pagu_besok, kas_sekarang, toleransi=0.0):
+    """Fungsi murni penentu tindakan penyesuaian kas cabang.
+
+    Logika bisnis:
+        selisih = prediksi_pagu_besok - kas_sekarang
+        - selisih  > toleransi   -> "ORDER"  (cabang KURANG kas, tarik dari pusat)
+        - selisih  < -toleransi  -> "REMISE" (cabang LEBIH kas, kirim ke pusat)
+        - |selisih| <= toleransi -> "TIDAK ADA" (sudah dalam batas wajar)
+
+    Mengembalikan tuple (jenis_tindakan, jumlah) dengan jumlah selalu >= 0.
+    Sengaja dibuat tanpa ketergantungan UI agar mudah diuji secara terpisah.
+    """
+    selisih = prediksi_pagu_besok - kas_sekarang
+    if selisih > toleransi:
+        return ("ORDER", selisih)
+    if selisih < -toleransi:
+        return ("REMISE", abs(selisih))
+    return ("TIDAK ADA", 0.0)
+
+
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -75,6 +95,18 @@ def init_db():
             mata_uang TEXT,
             nominal REAL,
             keterangan TEXT
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS keputusan_kas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tanggal TEXT,
+            model_dipakai TEXT,
+            prediksi_pagu REAL,
+            kas_sekarang REAL,
+            selisih REAL,
+            tindakan TEXT,
+            jumlah_tindakan REAL
         )
     ''')
     conn.commit()
@@ -276,6 +308,11 @@ class AppBNI(ttk.Window):
         self.notebook.add(self.tab_supply_remise, text="Supply & Remise")
         self.build_tab_supply_remise()
 
+        # Tab 6: Penyesuaian Kas — keputusan Order/Remise berdasarkan prediksi vs kas fisik
+        self.tab_order_remise = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(self.tab_order_remise, text="Penyesuaian Kas")
+        self.build_tab_order_remise()
+
     def build_tab_prediksi(self):
         """Membangun dashboard Prediksi Pagu Kas: upload dataset, lalu
         tampilkan prediksi pagu buka untuk hari berikutnya (MA3 sebagai
@@ -285,6 +322,10 @@ class AppBNI(ttk.Window):
         self.lstm_model = None
         self.lstm_scaler = None
         self.hasil_perhitungan = None
+        # Nilai prediksi besok terakhir, dipakai oleh tab Penyesuaian Kas (Order/Remise)
+        self.pred_besok_ma3 = None
+        self.pred_besok_lstm = None
+        self.tanggal_besok_pred = None
 
         top = ttk.Frame(self.tab_prediksi)
         top.pack(fill=X, pady=(0, 10))
@@ -658,6 +699,221 @@ class AppBNI(ttk.Window):
                 f"{row['nominal']:,.0f}", row["keterangan"],
             ), tags=(tag,))
 
+    def build_tab_order_remise(self):
+        """Membangun tab Penyesuaian Kas: membandingkan prediksi pagu besok
+        (dari tab Prediksi Pagu Kas) dengan kas fisik cabang yang diinput user,
+        lalu menentukan tindakan ORDER (tarik dari pusat) atau REMISE (kirim ke
+        pusat). Keputusan dapat disimpan ke tabel keputusan_kas."""
+        ttk.Label(
+            self.tab_order_remise,
+            text="Bandingkan prediksi pagu kas besok dengan kas fisik cabang sekarang untuk "
+                 "menentukan ORDER (tarik dari pusat) atau REMISE (kirim ke pusat). "
+                 "Jalankan prediksi di tab \"Prediksi Pagu Kas\" terlebih dahulu.",
+            font=("Helvetica", 9, "italic"), bootstyle="secondary", wraplength=900,
+        ).pack(anchor=W, pady=(0, 12))
+
+        atas = ttk.Frame(self.tab_order_remise)
+        atas.pack(fill=X)
+
+        # --- Sumber prediksi + pilihan model (ditampilkan apa adanya) ---
+        grup_pred = ttk.Labelframe(atas, text="Sumber Prediksi", padding=14, bootstyle="secondary")
+        grup_pred.pack(side=LEFT, fill=Y, padx=(0, 12))
+        self.lbl_or_tanggal = ttk.Label(grup_pred, text="Prediksi untuk: -", font=("Helvetica", 9))
+        self.lbl_or_tanggal.pack(anchor=W, pady=(0, 8))
+
+        self.var_model_keputusan = tk.StringVar(value="MA3")
+        ttk.Radiobutton(
+            grup_pred, text="MA3 (model utama, lebih akurat)", value="MA3",
+            variable=self.var_model_keputusan, bootstyle="success",
+        ).pack(anchor=W)
+        self.lbl_or_pred_ma3 = ttk.Label(grup_pred, text="MA3: -", font=("Helvetica", 9, "bold"))
+        self.lbl_or_pred_ma3.pack(anchor=W, padx=(22, 0), pady=(0, 8))
+        ttk.Radiobutton(
+            grup_pred, text="LSTM (pembanding)", value="LSTM",
+            variable=self.var_model_keputusan, bootstyle="info",
+        ).pack(anchor=W)
+        self.lbl_or_pred_lstm = ttk.Label(grup_pred, text="LSTM: -", font=("Helvetica", 9, "bold"))
+        self.lbl_or_pred_lstm.pack(anchor=W, padx=(22, 0))
+
+        # --- Input kas cabang ---
+        grup_input = ttk.Labelframe(atas, text="Input Kas Cabang", padding=14, bootstyle="secondary")
+        grup_input.pack(side=LEFT, fill=Y)
+        ttk.Label(grup_input, text="Kas cabang sekarang (Rp)", font=("Helvetica", 9)).pack(anchor=W)
+        self.ent_or_kas = ttk.Entry(grup_input, width=26)
+        self.ent_or_kas.pack(fill=X, pady=(3, 10))
+        ttk.Label(grup_input, text="Toleransi (Rp, opsional)", font=("Helvetica", 9)).pack(anchor=W)
+        self.ent_or_toleransi = ttk.Entry(grup_input, width=26)
+        self.ent_or_toleransi.insert(0, "0")
+        self.ent_or_toleransi.pack(fill=X, pady=(3, 10))
+        ttk.Button(
+            grup_input, text="Hitung Keputusan", bootstyle="primary",
+            command=self.hitung_keputusan_kas,
+        ).pack(fill=X)
+
+        # --- Panel hasil keputusan ---
+        grup_hasil = ttk.Labelframe(self.tab_order_remise, text="Hasil Keputusan", padding=14, bootstyle="secondary")
+        grup_hasil.pack(fill=X, pady=12)
+        self.lbl_hasil_prediksi = ttk.Label(grup_hasil, text="Prediksi pagu besok: -", font=("Helvetica", 10))
+        self.lbl_hasil_prediksi.pack(anchor=W)
+        self.lbl_hasil_kas = ttk.Label(grup_hasil, text="Kas cabang sekarang: -", font=("Helvetica", 10))
+        self.lbl_hasil_kas.pack(anchor=W)
+        self.lbl_hasil_selisih = ttk.Label(grup_hasil, text="Selisih (prediksi - kas): -", font=("Helvetica", 10))
+        self.lbl_hasil_selisih.pack(anchor=W, pady=(0, 8))
+        self.lbl_hasil_tindakan = ttk.Label(
+            grup_hasil, text="Belum dihitung", font=("Helvetica", 16, "bold"), bootstyle="secondary",
+        )
+        self.lbl_hasil_tindakan.pack(anchor=W, pady=(0, 10))
+        ttk.Button(
+            grup_hasil, text="Simpan Keputusan ke Database", bootstyle="success",
+            command=self.simpan_keputusan_kas,
+        ).pack(anchor=W)
+
+        # --- Riwayat keputusan ---
+        bawah = ttk.Frame(self.tab_order_remise)
+        bawah.pack(fill=BOTH, expand=YES)
+        baris_btn = ttk.Frame(bawah)
+        baris_btn.pack(fill=X, pady=(0, 6))
+        ttk.Label(baris_btn, text="Riwayat Keputusan Penyesuaian Kas",
+                  font=("Helvetica", 11, "bold")).pack(side=LEFT)
+        ttk.Button(baris_btn, text="Muat Riwayat", bootstyle="info",
+                   command=self.muat_riwayat_keputusan).pack(side=RIGHT)
+
+        self.tree_keputusan = ttk.Treeview(
+            bawah,
+            columns=("tanggal", "model", "prediksi", "kas", "selisih", "tindakan", "jumlah"),
+            show="headings", height=8,
+        )
+        label_kep = {
+            "tanggal": "Tanggal", "model": "Model", "prediksi": "Prediksi Pagu",
+            "kas": "Kas Sekarang", "selisih": "Selisih", "tindakan": "Tindakan", "jumlah": "Jumlah",
+        }
+        for col in self.tree_keputusan["columns"]:
+            self.tree_keputusan.heading(col, text=label_kep[col])
+            self.tree_keputusan.column(col, width=120, anchor=CENTER)
+        self.tree_keputusan.tag_configure("order", background="#152B3A", foreground="#3DAFD0")
+        self.tree_keputusan.tag_configure("remise", background="#3A2A1A", foreground="#F2A104")
+        self.tree_keputusan.tag_configure("netral", background="#1A3A2A", foreground="#2ECC71")
+        self.tree_keputusan.pack(fill=BOTH, expand=YES)
+
+        self._keputusan_terakhir = None
+        self._sinkron_prediksi_order_remise()
+        self.muat_riwayat_keputusan()
+
+    def _sinkron_prediksi_order_remise(self):
+        """Memperbarui label nilai prediksi MA3/LSTM dan tanggal pada tab
+        Penyesuaian Kas, sesuai hasil prediksi terakhir di tab Prediksi Pagu Kas."""
+        if not hasattr(self, "lbl_or_pred_ma3"):
+            return
+        ma3 = f"MA3: Rp {self.pred_besok_ma3:,.0f}" if self.pred_besok_ma3 is not None else "MA3: -"
+        lstm = f"LSTM: Rp {self.pred_besok_lstm:,.0f}" if self.pred_besok_lstm is not None else "LSTM: Tidak aktif"
+        self.lbl_or_pred_ma3.config(text=ma3)
+        self.lbl_or_pred_lstm.config(text=lstm)
+        tgl = self.tanggal_besok_pred
+        self.lbl_or_tanggal.config(text=f"Prediksi untuk: {tgl}" if tgl else "Prediksi untuk: -")
+
+    def _ambil_prediksi_terpilih(self):
+        """Mengembalikan (nama_model, nilai_prediksi) sesuai model yang dipilih user.
+        nilai_prediksi bisa None bila model tersebut belum/ tidak menghasilkan prediksi."""
+        model = self.var_model_keputusan.get()
+        if model == "LSTM":
+            return ("LSTM", self.pred_besok_lstm)
+        return ("MA3", self.pred_besok_ma3)
+
+    def hitung_keputusan_kas(self):
+        """Menghitung tindakan ORDER/REMISE/TIDAK ADA dari prediksi terpilih dan
+        kas cabang yang diinput user, lalu menampilkannya dengan indikator warna."""
+        model, prediksi = self._ambil_prediksi_terpilih()
+        if prediksi is None:
+            pesan = f"Prediksi {model} belum tersedia. Jalankan prediksi di tab 'Prediksi Pagu Kas' dahulu."
+            if model == "LSTM":
+                pesan += "\n(LSTM mungkin tidak aktif jika TensorFlow tidak tersedia.)"
+            messagebox.showwarning("Peringatan", pesan)
+            return
+
+        teks_kas = self.ent_or_kas.get().strip()
+        if not teks_kas:
+            messagebox.showwarning("Peringatan", "Isi kas cabang sekarang!")
+            return
+        kas = self.bersihkan_angka(teks_kas)
+        if kas < 0:
+            messagebox.showwarning("Peringatan", "Kas sekarang tidak boleh negatif!")
+            return
+
+        teks_tol = self.ent_or_toleransi.get().strip()
+        toleransi = self.bersihkan_angka(teks_tol) if teks_tol else 0.0
+        if toleransi < 0:
+            messagebox.showwarning("Peringatan", "Toleransi tidak boleh negatif!")
+            return
+
+        tindakan, jumlah = hitung_order_remise(prediksi, kas, toleransi)
+        selisih = prediksi - kas
+
+        self.lbl_hasil_prediksi.config(text=f"Prediksi pagu besok ({model}): Rp {prediksi:,.0f}")
+        self.lbl_hasil_kas.config(text=f"Kas cabang sekarang: Rp {kas:,.0f}")
+        self.lbl_hasil_selisih.config(text=f"Selisih (prediksi - kas): Rp {selisih:,.0f}")
+
+        gaya = {"ORDER": "info", "REMISE": "warning", "TIDAK ADA": "success"}[tindakan]
+        if tindakan == "TIDAK ADA":
+            teks_tindakan = "TIDAK ADA tindakan (selisih dalam toleransi)"
+        else:
+            arah = "tarik dari pusat" if tindakan == "ORDER" else "kirim ke pusat"
+            teks_tindakan = f"{tindakan}  Rp {jumlah:,.0f}  ({arah})"
+        self.lbl_hasil_tindakan.config(text=teks_tindakan, bootstyle=gaya)
+
+        self._keputusan_terakhir = {
+            "model": model, "prediksi": prediksi, "kas": kas,
+            "selisih": selisih, "tindakan": tindakan, "jumlah": jumlah,
+        }
+        self._set_status(
+            f"Keputusan kas dihitung ({model}): {tindakan}"
+            + (f" Rp {jumlah:,.0f}" if tindakan != "TIDAK ADA" else "")
+        )
+
+    def simpan_keputusan_kas(self):
+        """Menyimpan keputusan penyesuaian kas terakhir ke tabel keputusan_kas."""
+        keputusan = getattr(self, "_keputusan_terakhir", None)
+        if not keputusan:
+            messagebox.showwarning("Peringatan", "Hitung keputusan terlebih dahulu sebelum menyimpan.")
+            return
+
+        tgl = str(self.tanggal_besok_pred) if self.tanggal_besok_pred else datetime.now().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO keputusan_kas (tanggal, model_dipakai, prediksi_pagu, kas_sekarang, "
+            "selisih, tindakan, jumlah_tindakan) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                tgl, keputusan["model"], keputusan["prediksi"], keputusan["kas"],
+                keputusan["selisih"], keputusan["tindakan"], keputusan["jumlah"],
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        self._set_status("Keputusan penyesuaian kas tersimpan ke database.")
+        messagebox.showinfo("Sukses", "Keputusan penyesuaian kas berhasil disimpan!")
+        self.muat_riwayat_keputusan()
+
+    def _query_keputusan_kas(self):
+        """Mengambil seluruh riwayat keputusan_kas (terbaru di atas)."""
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT * FROM keputusan_kas ORDER BY id DESC", conn)
+        conn.close()
+        return df
+
+    def muat_riwayat_keputusan(self):
+        """Memuat ulang tabel riwayat keputusan penyesuaian kas dari database."""
+        df = self._query_keputusan_kas()
+        for i in self.tree_keputusan.get_children():
+            self.tree_keputusan.delete(i)
+        tag_map = {"ORDER": "order", "REMISE": "remise", "TIDAK ADA": "netral"}
+        for _, row in df.iterrows():
+            self.tree_keputusan.insert("", END, values=(
+                row["tanggal"], row["model_dipakai"], f"{row['prediksi_pagu']:,.0f}",
+                f"{row['kas_sekarang']:,.0f}", f"{row['selisih']:,.0f}",
+                row["tindakan"], f"{row['jumlah_tindakan']:,.0f}",
+            ), tags=(tag_map.get(row["tindakan"], ""),))
+
     def _ambil_ambang_batas(self):
         """Membaca nilai ambang batas over-limit (%) dari sidebar; default 20% jika input tidak valid."""
         try:
@@ -724,6 +980,10 @@ class AppBNI(ttk.Window):
             self.lbl_tanggal_prediksi.config(text=f"Prediksi Pagu Buka {label_tanggal}")
             self.lbl_pred_ma3.config(text=f"Rp {pred_besok_ma3:,.0f}")
 
+            # Simpan untuk tab Penyesuaian Kas (Order/Remise)
+            self.pred_besok_ma3 = pred_besok_ma3
+            self.tanggal_besok_pred = tanggal_besok.date() if tanggal_besok is not None else None
+
             teks_ma3 = (
                 "Rumus: MA3 = (nilai_1 + nilai_2 + nilai_3) / 3\n\n"
                 "3 nilai aktual terakhir yang dipakai:\n"
@@ -765,6 +1025,7 @@ class AppBNI(ttk.Window):
                     self.lstm_model, self.lstm_scaler, series
                 )
                 self.lbl_pred_lstm.config(text=f"Rp {pred_besok_lstm:,.0f}")
+                self.pred_besok_lstm = pred_besok_lstm
 
                 teks_lstm = (
                     f"Scaler MinMaxScaler (fit hanya pada data train):\n"
@@ -783,6 +1044,7 @@ class AppBNI(ttk.Window):
                 self.ax_lstm.clear()
                 self.ax_lstm.set_title("LSTM tidak aktif (TensorFlow tidak tersedia)")
                 self.lbl_pred_lstm.config(text="Tidak aktif")
+                self.pred_besok_lstm = None
                 self._isi_teks(
                     self.txt_perhitungan_lstm,
                     "LSTM tidak aktif — TensorFlow tidak tersedia di environment ini.",
@@ -791,6 +1053,10 @@ class AppBNI(ttk.Window):
             self._gaya_chart_gelap(self.fig_pred, self.ax_ma3, self.ax_lstm)
             self.fig_pred.tight_layout()
             self.canvas_pred.draw()
+
+            # Perbarui info prediksi pada tab Penyesuaian Kas (jika sudah dibangun)
+            if hasattr(self, "_sinkron_prediksi_order_remise"):
+                self._sinkron_prediksi_order_remise()
 
             messagebox.showinfo("Sukses", f"Prediksi selesai untuk {len(df)} baris data.")
         except Exception as e:
