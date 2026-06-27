@@ -1,6 +1,11 @@
 pandas
+numpy
 openpyxl
 Pillow
 pyinstaller
 ttkbootstrap
+matplotlib
+scikit-learn
+tensorflow
+reportlab
 
