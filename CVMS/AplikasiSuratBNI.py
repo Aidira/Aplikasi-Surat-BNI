@@ -79,6 +79,31 @@ BNI_THEME = ThemeDefinition(
     ),
 )
 
+def prediksi_lstm_terlatih(nilai10, data_min, data_max, model):
+    """Fungsi murni prediksi pagu besok memakai model LSTM TERLATIH (.h5).
+
+    Pipeline (sesuai cara model dilatih):
+        1. normalisasi tiap nilai: x_norm = (x - data_min) / (data_max - data_min)
+        2. bentuk array (1, 10, 1)  -> (1 sampel, 10 timestep, 1 fitur)
+        3. model.predict -> keluaran skala [0, 1]
+        4. inverse transform: y = y_norm * (data_max - data_min) + data_min
+
+    `model` diterima sebagai argumen (bukan dimuat di dalam) agar fungsi mudah
+    diuji terpisah dari UI. Mengembalikan (prediksi_rupiah, y_norm).
+    """
+    if len(nilai10) != 10:
+        raise ValueError(f"Butuh tepat 10 nilai, diberikan {len(nilai10)}.")
+    rentang = float(data_max) - float(data_min)
+    if rentang == 0:
+        raise ValueError("data_max - data_min = 0; parameter scaler tidak valid.")
+    arr = np.asarray(nilai10, dtype=float)
+    arr_norm = (arr - float(data_min)) / rentang
+    x = arr_norm.reshape(1, 10, 1)
+    y_norm = float(np.asarray(model.predict(x, verbose=0)).ravel()[0])
+    y_rupiah = y_norm * rentang + float(data_min)
+    return (y_rupiah, y_norm)
+
+
 def hitung_order_remise(prediksi_pagu_besok, kas_sekarang, toleransi=0.0):
     """Fungsi murni penentu tindakan penyesuaian kas cabang.
 
@@ -353,7 +378,9 @@ class AppBNI(ttk.Window):
         # Nilai prediksi besok terakhir, dipakai oleh tab Penyesuaian Kas (Order/Remise)
         self.pred_besok_ma3 = None
         self.pred_besok_lstm = None
+        self.pred_besok_lstm_terlatih = None  # hasil prediksi model .h5 terlatih (input 10 nilai manual)
         self.tanggal_besok_pred = None
+        self._lstm_terlatih_cache = None  # cache (model, data_min, data_max) agar .h5 dimuat sekali saja
 
         top = ttk.Frame(self.tab_prediksi)
         top.pack(fill=X, pady=(0, 10))
@@ -424,6 +451,149 @@ class AppBNI(ttk.Window):
             self.tree_metrik.heading(col, text=label)
             self.tree_metrik.column(col, width=140, anchor=CENTER)
         self.tree_metrik.pack(fill=X)
+
+        # --- Section: Prediksi dari MODEL TERLATIH (model_lstm_pagu.h5) ---
+        ttk.Separator(body).pack(fill=X, pady=14)
+        grup_terlatih = ttk.Labelframe(
+            body, text="Prediksi dari Model Terlatih (model_lstm_pagu.h5)",
+            padding=14, bootstyle="secondary",
+        )
+        grup_terlatih.pack(fill=X)
+
+        model_path = resource_path("model_lstm_pagu.h5")
+        scaler_path = resource_path("scaler_info.json")
+        model_ada = os.path.exists(model_path) and os.path.exists(scaler_path)
+        self.lbl_status_terlatih = ttk.Label(
+            grup_terlatih,
+            text=("Model terlatih ditemukan. Masukkan 10 nilai pagu harian terakhir." if model_ada
+                  else "Model belum tersedia — letakkan model_lstm_pagu.h5 dan scaler_info.json "
+                       "di folder aplikasi (CVMS/)."),
+            font=("Helvetica", 9, "bold"),
+            bootstyle="success" if model_ada else "warning",
+        )
+        self.lbl_status_terlatih.pack(anchor=W, pady=(0, 8))
+
+        ttk.Label(
+            grup_terlatih,
+            text="10 nilai pagu harian terakhir (rupiah), pisahkan dengan koma atau spasi:",
+            font=("Helvetica", 9),
+        ).pack(anchor=W)
+        self.ent_10nilai = ttk.Entry(grup_terlatih)
+        self.ent_10nilai.pack(fill=X, pady=(3, 10))
+
+        self.btn_prediksi_terlatih = ttk.Button(
+            grup_terlatih, text="Prediksi (Model Terlatih)", bootstyle="primary",
+            command=self.prediksi_dari_model_terlatih,
+        )
+        self.btn_prediksi_terlatih.pack(anchor=W)
+        if not model_ada:
+            self.btn_prediksi_terlatih.config(state="disabled")
+
+        self.lbl_pred_terlatih = ttk.Label(
+            grup_terlatih, text="Prediksi LSTM (terlatih): Rp -",
+            font=("Helvetica", 16, "bold"), bootstyle="info",
+        )
+        self.lbl_pred_terlatih.pack(anchor=W, pady=(10, 0))
+        self.lbl_ma3_baseline_terlatih = ttk.Label(
+            grup_terlatih, text="MA3 (baseline, rata-rata 3 nilai terakhir): Rp -",
+            font=("Helvetica", 10),
+        )
+        self.lbl_ma3_baseline_terlatih.pack(anchor=W)
+
+        ttk.Label(
+            grup_terlatih,
+            text="Catatan: prediksi ini hasil model dengan akurasi terbatas (R² masih rendah); "
+                 "angka ditampilkan apa adanya. Untuk keputusan Order/Remise, buka tab "
+                 "\"Penyesuaian Kas\" dan pilih model \"LSTM (model terlatih)\".",
+            font=("Helvetica", 8, "italic"), bootstyle="secondary", wraplength=850,
+        ).pack(anchor=W, pady=(8, 0))
+
+    def _muat_model_terlatih(self):
+        """Memuat model_lstm_pagu.h5 dan scaler_info.json SEKALI saja (lazy load),
+        karena TensorFlow berat. Mengembalikan (model, data_min, data_max), atau
+        (None, None, None) bila file tidak ada / gagal dimuat."""
+        if self._lstm_terlatih_cache is not None:
+            return self._lstm_terlatih_cache
+
+        model_path = resource_path("model_lstm_pagu.h5")
+        scaler_path = resource_path("scaler_info.json")
+        if not (os.path.exists(model_path) and os.path.exists(scaler_path)):
+            return (None, None, None)
+
+        import json
+        from tensorflow.keras.models import load_model
+        model = load_model(model_path, compile=False)
+        with open(scaler_path) as f:
+            info = json.load(f)
+
+        def _skalar(v):
+            return float(v[0]) if isinstance(v, (list, tuple)) else float(v)
+
+        data_min = _skalar(info["data_min"])
+        data_max = _skalar(info["data_max"])
+        self._lstm_terlatih_cache = (model, data_min, data_max)
+        return self._lstm_terlatih_cache
+
+    def _parse_10_nilai(self, teks):
+        """Mengurai teks berisi 10 angka (dipisah koma/spasi/baris) menjadi list
+        float. Memunculkan ValueError bila jumlahnya bukan 10 atau ada yang bukan angka."""
+        import re
+        tokens = [t for t in re.split(r"[,\s]+", teks.strip()) if t]
+        if len(tokens) != 10:
+            raise ValueError(f"Masukkan tepat 10 angka (terdeteksi {len(tokens)}).")
+        nilai = []
+        for t in tokens:
+            s = t.upper().replace("RP", "").replace("IDR", "").replace(" ", "").strip()
+            if "." in s and "," in s:
+                s = s.replace(".", "").replace(",", ".")
+            elif "." in s:
+                s = s.replace(".", "")   # titik = pemisah ribuan (nilai pagu = bilangan bulat)
+            elif "," in s:
+                s = s.replace(",", ".")
+            nilai.append(float(s))       # ValueError otomatis jika bukan angka
+        return nilai
+
+    def prediksi_dari_model_terlatih(self):
+        """Handler tombol Prediksi (Model Terlatih): validasi 10 input, muat model
+        (lazy), jalankan pure function prediksi_lstm_terlatih, tampilkan hasil +
+        baseline MA3, dan simpan nilai untuk dipakai tab Penyesuaian Kas."""
+        try:
+            nilai10 = self._parse_10_nilai(self.ent_10nilai.get())
+        except ValueError as e:
+            messagebox.showwarning("Peringatan", f"Input tidak valid: {e}")
+            return
+
+        model, data_min, data_max = self._muat_model_terlatih()
+        if model is None:
+            messagebox.showerror(
+                "Model tidak tersedia",
+                "model_lstm_pagu.h5 / scaler_info.json tidak ditemukan di folder aplikasi.",
+            )
+            return
+
+        self._set_status("Memuat model & menghitung prediksi LSTM terlatih...")
+        self.update_idletasks()
+        try:
+            pred_rupiah, y_norm = prediksi_lstm_terlatih(nilai10, data_min, data_max, model)
+        except Exception as e:
+            messagebox.showerror("Error", f"Gagal menjalankan prediksi: {e}")
+            self._set_status("Prediksi LSTM terlatih gagal.")
+            return
+
+        baseline_ma3 = sum(nilai10[-3:]) / 3.0
+
+        self.pred_besok_lstm_terlatih = pred_rupiah
+        self.lbl_pred_terlatih.config(text=f"Prediksi LSTM (terlatih): Rp {pred_rupiah:,.0f}")
+        self.lbl_ma3_baseline_terlatih.config(
+            text=f"MA3 (baseline, rata-rata 3 nilai terakhir): Rp {baseline_ma3:,.0f}"
+        )
+        self._set_status(
+            f"Prediksi LSTM terlatih: Rp {pred_rupiah:,.0f} (skala ternormalisasi {y_norm:.4f})."
+        )
+
+        # Sinkronkan ke tab Penyesuaian Kas bila sudah dibangun
+        if hasattr(self, "_sinkron_prediksi_order_remise"):
+            self._sinkron_prediksi_order_remise()
 
     def build_tab_perhitungan(self):
         """Membangun tab Preview Perhitungan: rincian langkah hitung MA3 dan
@@ -761,7 +931,13 @@ class AppBNI(ttk.Window):
             variable=self.var_model_keputusan, bootstyle="info",
         ).pack(anchor=W)
         self.lbl_or_pred_lstm = ttk.Label(grup_pred, text="LSTM: -", font=("Helvetica", 9, "bold"))
-        self.lbl_or_pred_lstm.pack(anchor=W, padx=(22, 0))
+        self.lbl_or_pred_lstm.pack(anchor=W, padx=(22, 0), pady=(0, 8))
+        ttk.Radiobutton(
+            grup_pred, text="LSTM (model terlatih .h5)", value="LSTM_TERLATIH",
+            variable=self.var_model_keputusan, bootstyle="info",
+        ).pack(anchor=W)
+        self.lbl_or_pred_terlatih = ttk.Label(grup_pred, text="LSTM terlatih: -", font=("Helvetica", 9, "bold"))
+        self.lbl_or_pred_terlatih.pack(anchor=W, padx=(22, 0))
 
         # --- Input kas cabang ---
         grup_input = ttk.Labelframe(atas, text="Input Kas Cabang", padding=14, bootstyle="secondary")
@@ -834,8 +1010,11 @@ class AppBNI(ttk.Window):
             return
         ma3 = f"MA3: Rp {self.pred_besok_ma3:,.0f}" if self.pred_besok_ma3 is not None else "MA3: -"
         lstm = f"LSTM: Rp {self.pred_besok_lstm:,.0f}" if self.pred_besok_lstm is not None else "LSTM: Tidak aktif"
+        terlatih = (f"LSTM terlatih: Rp {self.pred_besok_lstm_terlatih:,.0f}"
+                    if self.pred_besok_lstm_terlatih is not None else "LSTM terlatih: -")
         self.lbl_or_pred_ma3.config(text=ma3)
         self.lbl_or_pred_lstm.config(text=lstm)
+        self.lbl_or_pred_terlatih.config(text=terlatih)
         tgl = self.tanggal_besok_pred
         self.lbl_or_tanggal.config(text=f"Prediksi untuk: {tgl}" if tgl else "Prediksi untuk: -")
 
@@ -845,6 +1024,8 @@ class AppBNI(ttk.Window):
         model = self.var_model_keputusan.get()
         if model == "LSTM":
             return ("LSTM", self.pred_besok_lstm)
+        if model == "LSTM_TERLATIH":
+            return ("LSTM (terlatih)", self.pred_besok_lstm_terlatih)
         return ("MA3", self.pred_besok_ma3)
 
     def hitung_keputusan_kas(self):
