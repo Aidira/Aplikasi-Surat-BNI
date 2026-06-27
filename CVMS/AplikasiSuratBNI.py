@@ -913,31 +913,22 @@ class AppBNI(ttk.Window):
         atas = ttk.Frame(self.tab_order_remise)
         atas.pack(fill=X)
 
-        # --- Sumber prediksi + pilihan model (ditampilkan apa adanya) ---
+        # --- Sumber prediksi: keputusan memakai LSTM (model terlatih),
+        #     MA3 ditampilkan sebagai pembanding. Tanpa menu pilihan. ---
         grup_pred = ttk.Labelframe(atas, text="Sumber Prediksi", padding=14, bootstyle="secondary")
         grup_pred.pack(side=LEFT, fill=Y, padx=(0, 12))
         self.lbl_or_tanggal = ttk.Label(grup_pred, text="Prediksi untuk: -", font=("Helvetica", 9))
         self.lbl_or_tanggal.pack(anchor=W, pady=(0, 8))
 
-        self.var_model_keputusan = tk.StringVar(value="MA3")
-        ttk.Radiobutton(
-            grup_pred, text="MA3 (model utama, lebih akurat)", value="MA3",
-            variable=self.var_model_keputusan, bootstyle="success",
-        ).pack(anchor=W)
-        self.lbl_or_pred_ma3 = ttk.Label(grup_pred, text="MA3: -", font=("Helvetica", 9, "bold"))
-        self.lbl_or_pred_ma3.pack(anchor=W, padx=(22, 0), pady=(0, 8))
-        ttk.Radiobutton(
-            grup_pred, text="LSTM (pembanding)", value="LSTM",
-            variable=self.var_model_keputusan, bootstyle="info",
-        ).pack(anchor=W)
-        self.lbl_or_pred_lstm = ttk.Label(grup_pred, text="LSTM: -", font=("Helvetica", 9, "bold"))
-        self.lbl_or_pred_lstm.pack(anchor=W, padx=(22, 0), pady=(0, 8))
-        ttk.Radiobutton(
-            grup_pred, text="LSTM (model terlatih .h5)", value="LSTM_TERLATIH",
-            variable=self.var_model_keputusan, bootstyle="info",
-        ).pack(anchor=W)
-        self.lbl_or_pred_terlatih = ttk.Label(grup_pred, text="LSTM terlatih: -", font=("Helvetica", 9, "bold"))
-        self.lbl_or_pred_terlatih.pack(anchor=W, padx=(22, 0))
+        ttk.Label(grup_pred, text="LSTM (dipakai untuk keputusan):",
+                  font=("Helvetica", 9), bootstyle="info").pack(anchor=W)
+        self.lbl_or_pred_terlatih = ttk.Label(grup_pred, text="Rp -", font=("Helvetica", 13, "bold"), bootstyle="info")
+        self.lbl_or_pred_terlatih.pack(anchor=W, pady=(0, 10))
+
+        ttk.Label(grup_pred, text="MA3 (pembanding):",
+                  font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W)
+        self.lbl_or_pred_ma3 = ttk.Label(grup_pred, text="Rp -", font=("Helvetica", 11, "bold"))
+        self.lbl_or_pred_ma3.pack(anchor=W)
 
         # --- Input kas cabang ---
         grup_input = ttk.Labelframe(atas, text="Input Kas Cabang", padding=14, bootstyle="secondary")
@@ -1006,37 +997,32 @@ class AppBNI(ttk.Window):
     def _sinkron_prediksi_order_remise(self):
         """Memperbarui label nilai prediksi MA3/LSTM dan tanggal pada tab
         Penyesuaian Kas, sesuai hasil prediksi terakhir di tab Prediksi Pagu Kas."""
-        if not hasattr(self, "lbl_or_pred_ma3"):
+        if not hasattr(self, "lbl_or_pred_terlatih"):
             return
-        ma3 = f"MA3: Rp {self.pred_besok_ma3:,.0f}" if self.pred_besok_ma3 is not None else "MA3: -"
-        lstm = f"LSTM: Rp {self.pred_besok_lstm:,.0f}" if self.pred_besok_lstm is not None else "LSTM: Tidak aktif"
-        terlatih = (f"LSTM terlatih: Rp {self.pred_besok_lstm_terlatih:,.0f}"
-                    if self.pred_besok_lstm_terlatih is not None else "LSTM terlatih: -")
-        self.lbl_or_pred_ma3.config(text=ma3)
-        self.lbl_or_pred_lstm.config(text=lstm)
+        terlatih = (f"Rp {self.pred_besok_lstm_terlatih:,.0f}"
+                    if self.pred_besok_lstm_terlatih is not None else "Rp -")
+        ma3 = f"Rp {self.pred_besok_ma3:,.0f}" if self.pred_besok_ma3 is not None else "Rp -"
         self.lbl_or_pred_terlatih.config(text=terlatih)
+        self.lbl_or_pred_ma3.config(text=ma3)
         tgl = self.tanggal_besok_pred
         self.lbl_or_tanggal.config(text=f"Prediksi untuk: {tgl}" if tgl else "Prediksi untuk: -")
 
     def _ambil_prediksi_terpilih(self):
-        """Mengembalikan (nama_model, nilai_prediksi) sesuai model yang dipilih user.
-        nilai_prediksi bisa None bila model tersebut belum/ tidak menghasilkan prediksi."""
-        model = self.var_model_keputusan.get()
-        if model == "LSTM":
-            return ("LSTM", self.pred_besok_lstm)
-        if model == "LSTM_TERLATIH":
-            return ("LSTM (terlatih)", self.pred_besok_lstm_terlatih)
-        return ("MA3", self.pred_besok_ma3)
+        """Mengembalikan (nama_model, nilai_prediksi) untuk keputusan Order/Remise.
+        Keputusan memakai LSTM (model terlatih); MA3 hanya pembanding tampilan.
+        nilai_prediksi bisa None bila prediksi LSTM belum dijalankan."""
+        return ("LSTM (terlatih)", self.pred_besok_lstm_terlatih)
 
     def hitung_keputusan_kas(self):
         """Menghitung tindakan ORDER/REMISE/TIDAK ADA dari prediksi terpilih dan
         kas cabang yang diinput user, lalu menampilkannya dengan indikator warna."""
         model, prediksi = self._ambil_prediksi_terpilih()
         if prediksi is None:
-            pesan = f"Prediksi {model} belum tersedia. Jalankan prediksi di tab 'Prediksi Pagu Kas' dahulu."
-            if model == "LSTM":
-                pesan += "\n(LSTM mungkin tidak aktif jika TensorFlow tidak tersedia.)"
-            messagebox.showwarning("Peringatan", pesan)
+            messagebox.showwarning(
+                "Peringatan",
+                "Prediksi LSTM belum tersedia. Buka tab 'Prediksi Pagu Kas', isi 10 nilai "
+                "pada bagian 'Prediksi dari Model Terlatih', lalu klik Prediksi terlebih dahulu.",
+            )
             return
 
         teks_kas = self.ent_or_kas.get().strip()
