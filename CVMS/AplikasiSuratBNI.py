@@ -18,8 +18,36 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from models import predictor as pred
 import surat_generator as suratgen
 
+
+def resource_path(nama_file):
+    """Mengembalikan path absolut ke file aset (mis. logo.png), baik saat
+    dijalankan dari source code maupun saat dibekukan PyInstaller. PyInstaller
+    mengekstrak aset ke folder sementara yang path-nya ada di sys._MEIPASS."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, nama_file)
+
+
+def lokasi_database():
+    """Menentukan lokasi file database yang DAPAT DITULIS.
+
+    Saat dibekukan (.exe/.app), isi bundle bersifat read-only — terutama
+    .app di macOS — sehingga DB tidak boleh ditaruh di dalam bundle. DB
+    diarahkan ke folder data pengguna per sistem operasi. Saat mode
+    pengembangan (jalan dari .py), DB tetap di folder kerja seperti semula."""
+    if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            base = os.path.expanduser("~/Library/Application Support/AplikasiSuratBNI")
+        elif sys.platform.startswith("win"):
+            base = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "AplikasiSuratBNI")
+        else:
+            base = os.path.expanduser("~/.aplikasi_surat_bni")
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, "database_bni.db")
+    return "database_bni.db"
+
+
 # --- KONFIGURASI DATABASE ---
-DB_NAME = "database_bni.db"
+DB_NAME = lokasi_database()
 
 # --- PALET WARNA KORPORAT BNI, gaya dashboard gelap (oranye & tosca dari logo.png) ---
 WARNA_BNI_ORANGE = "#F15A23"
@@ -158,7 +186,7 @@ class AppBNI(ttk.Window):
         isi = ttk.Frame(header, bootstyle="secondary", padding=(20, 12))
         isi.pack(fill=X)
 
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+        logo_path = resource_path("logo.png")
         if os.path.exists(logo_path):
             img = Image.open(logo_path)
             ratio = img.height / img.width

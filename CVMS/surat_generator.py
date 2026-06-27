@@ -7,6 +7,7 @@ per outlet, paragraf penutup, dan blok tanda tangan Branch Service Manager.
 """
 
 import os
+import sys
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -21,7 +22,14 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+def _resource_path(nama_file):
+    """Path absolut ke aset, mendukung mode source maupun bundel PyInstaller
+    (aset diekstrak ke sys._MEIPASS saat dibekukan)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, nama_file)
+
+
+LOGO_PATH = _resource_path("logo.png")
 
 NAMA_BULAN = [
     "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
