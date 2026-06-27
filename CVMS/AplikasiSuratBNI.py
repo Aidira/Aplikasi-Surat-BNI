@@ -11,6 +11,11 @@ import sys
 from datetime import datetime
 from PIL import Image, ImageTk
 
+# Paksa backend matplotlib ke TkAgg SEBELUM modul lain memuat backend lain.
+# Di macOS, bila matplotlib memakai backend Cocoa bawaan bersamaan dengan
+# Tkinter, dapat memicu crash native (NSException). TkAgg aman dengan Tkinter.
+import matplotlib
+matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
